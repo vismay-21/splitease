@@ -12,22 +12,44 @@ class GroupsScreen extends StatefulWidget {
   State<GroupsScreen> createState() => _GroupsScreenState();
 }
 
-class _GroupsScreenState extends State<GroupsScreen> {
+class _GroupsScreenState extends State<GroupsScreen>
+    with AutomaticKeepAliveClientMixin, SingleTickerProviderStateMixin {
+  static List<GroupSummary>? _cachedGroups;
+  static List<GroupInvitation>? _cachedInvitations;
+
   final SupabaseClient _client = Supabase.instance.client;
   final TextEditingController _inviteEmailController = TextEditingController();
 
   StreamSubscription<Uri>? _deepLinkSubscription;
 
   bool _isLoading = true;
+  bool _hasLoadedOnce = false;
   String? _loadError;
   List<GroupSummary> _groups = <GroupSummary>[];
   List<GroupInvitation> _pendingInvitations = <GroupInvitation>[];
+  AnimationController? _fabEntranceController;
 
   User? get _currentUser => _client.auth.currentUser;
 
   @override
   void initState() {
     super.initState();
+    _ensureFabController();
+
+    if (_cachedGroups != null || _cachedInvitations != null) {
+      try {
+        _groups = List<GroupSummary>.from(_cachedGroups ?? <GroupSummary>[]);
+        _pendingInvitations =
+            List<GroupInvitation>.from(_cachedInvitations ?? <GroupInvitation>[]);
+        _isLoading = false;
+        _hasLoadedOnce = true;
+      } catch (_) {
+        // Hot reload can leave stale cached model objects after shape changes.
+        _cachedGroups = null;
+        _cachedInvitations = null;
+      }
+    }
+
     _listenForPaymentCallbacks();
     _loadData();
   }
@@ -36,8 +58,25 @@ class _GroupsScreenState extends State<GroupsScreen> {
   void dispose() {
     _inviteEmailController.dispose();
     _deepLinkSubscription?.cancel();
+    _fabEntranceController?.dispose();
     super.dispose();
   }
+
+  void _ensureFabController() {
+    _fabEntranceController ??= AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 260),
+    );
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && !(_fabEntranceController?.isAnimating ?? false)) {
+        _fabEntranceController?.forward(from: 0);
+      }
+    });
+  }
+
+  @override
+  bool get wantKeepAlive => true;
 
   void _listenForPaymentCallbacks() {
     final appLinks = AppLinks();
@@ -92,7 +131,7 @@ class _GroupsScreenState extends State<GroupsScreen> {
     }
 
     setState(() {
-      _isLoading = true;
+      _isLoading = !_hasLoadedOnce;
       _loadError = null;
     });
 
@@ -110,6 +149,9 @@ class _GroupsScreenState extends State<GroupsScreen> {
         _groups = results[0] as List<GroupSummary>;
         _pendingInvitations = results[1] as List<GroupInvitation>;
         _isLoading = false;
+        _hasLoadedOnce = true;
+        _cachedGroups = List<GroupSummary>.from(_groups);
+        _cachedInvitations = List<GroupInvitation>.from(_pendingInvitations);
       });
     } on PostgrestException catch (error) {
       if (!mounted) {
@@ -279,7 +321,11 @@ class _GroupsScreenState extends State<GroupsScreen> {
     );
   }
 
-  Future<void> _openGroupDetails(GroupSummary group) async {
+  Future<void> _openGroupSectionPopup({
+    required GroupSummary group,
+    required String sectionTitle,
+    required Widget Function(GroupDetailsData details) builder,
+  }) async {
     await showDialog<void>(
       context: context,
       builder: (context) {
@@ -292,14 +338,14 @@ class _GroupsScreenState extends State<GroupsScreen> {
               builder: (context, snapshot) {
                 if (snapshot.connectionState == ConnectionState.waiting) {
                   return const SizedBox(
-                    height: 280,
+                    height: 320,
                     child: Center(child: CircularProgressIndicator()),
                   );
                 }
 
                 if (snapshot.hasError || snapshot.data == null) {
                   return SizedBox(
-                    height: 280,
+                    height: 320,
                     child: Center(
                       child: Text(
                         'Could not load group details. Make sure group_expenses and group_members tables exist.',
@@ -310,20 +356,84 @@ class _GroupsScreenState extends State<GroupsScreen> {
                   );
                 }
 
-                return _GroupDetailsView(
-                  group: group,
-                  details: snapshot.data!,
-                  currentUserId: _currentUser?.id,
-                  onPay: (member) => _openPaymentPopup(group, member),
-                  onRemoveMember: (member) => _removeMemberFromGroup(group, member),
-                  onAddExpense: () => _openAddExpenseDialog(group),
-                  onAddMembers: () => _openAddMemberDialog(group),
+                final details = snapshot.data!;
+
+                return SizedBox(
+                  width: 640,
+                  height: 560,
+                  child: Column(
+                    children: [
+                      Row(
+                        children: [
+                          CircleAvatar(
+                            backgroundColor: const Color(0xFFD8ECFA),
+                            child: Icon(
+                              _GroupBar._iconFor(group.icon),
+                              color: const Color(0xFF1D6CAB),
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Text(
+                              '$sectionTitle - ${group.name}',
+                              style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                            ),
+                          ),
+                          IconButton(
+                            onPressed: () => Navigator.of(context).pop(),
+                            icon: const Icon(Icons.close),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 10),
+                      Expanded(
+                        child: SingleChildScrollView(
+                          child: builder(details),
+                        ),
+                      ),
+                    ],
+                  ),
                 );
               },
             ),
           ),
         );
       },
+    );
+  }
+
+  Future<void> _openExpenseListPopup(GroupSummary group) {
+    return _openGroupSectionPopup(
+      group: group,
+      sectionTitle: 'Expense List',
+      builder: (details) => _ExpenseListCard(expenses: details.expenses),
+    );
+  }
+
+  Future<void> _openMemberBalancePopup(GroupSummary group) {
+    return _openGroupSectionPopup(
+      group: group,
+      sectionTitle: 'Member Balance List',
+      builder: (details) => _MemberBalanceCard(
+        members: details.members,
+        currentUserId: _currentUser?.id,
+        isOwner: group.createdByUserId == _currentUser?.id,
+        onPay: (member) => _openPaymentPopup(group, member),
+        onRemoveMember: (member) => _removeMemberFromGroup(group, member),
+      ),
+    );
+  }
+
+  Future<void> _openGroupActionsPopup(GroupSummary group) {
+    return _openGroupSectionPopup(
+      group: group,
+      sectionTitle: 'Group Actions',
+      builder: (_) => _ActionCard(
+        onAddExpense: () => _openAddExpenseDialog(group),
+        onAddMembers: () => _openAddMemberDialog(group),
+      ),
     );
   }
 
@@ -498,9 +608,13 @@ class _GroupsScreenState extends State<GroupsScreen> {
     final nameController = TextEditingController();
     String selectedIcon = 'group';
 
-    await showDialog<void>(
+    await showGeneralDialog<void>(
       context: context,
-      builder: (context) {
+      barrierLabel: 'Create group',
+      barrierDismissible: true,
+      barrierColor: Colors.black54,
+      transitionDuration: const Duration(milliseconds: 320),
+      pageBuilder: (context, animation, secondaryAnimation) {
         return StatefulBuilder(
           builder: (context, setModalState) {
             return AlertDialog(
@@ -552,6 +666,21 @@ class _GroupsScreenState extends State<GroupsScreen> {
               ],
             );
           },
+        );
+      },
+      transitionBuilder: (context, animation, secondaryAnimation, child) {
+        final curved = CurvedAnimation(
+          parent: animation,
+          curve: Curves.easeOutCubic,
+          reverseCurve: Curves.easeInCubic,
+        );
+
+        return FadeTransition(
+          opacity: curved,
+          child: ScaleTransition(
+            scale: Tween<double>(begin: 0.92, end: 1).animate(curved),
+            child: child,
+          ),
         );
       },
     );
@@ -1019,82 +1148,135 @@ class _GroupsScreenState extends State<GroupsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    if (_isLoading) {
-      return const Center(child: CircularProgressIndicator());
-    }
+    super.build(context);
+    _ensureFabController();
+    final topInset = MediaQuery.of(context).padding.top;
 
     if (_loadError != null) {
-      return Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Text(
-              _loadError!,
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 12),
-            FilledButton(
-              onPressed: _loadData,
-              child: const Text('Retry'),
-            ),
-          ],
+      return Container(
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [
+              Color(0xFFE9F4FF),
+              Color(0xFFF1F8FF),
+            ],
+          ),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Text(
+                _loadError!,
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 12),
+              FilledButton(
+                onPressed: _loadData,
+                child: const Text('Retry'),
+              ),
+            ],
+          ),
         ),
       );
     }
 
-    return RefreshIndicator(
-      onRefresh: _loadData,
-      child: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
+    return Container(
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [
+            Color(0xFFE9F4FF),
+            Color(0xFFF1F8FF),
+          ],
+        ),
+      ),
+      child: Stack(
         children: [
-          Row(
-            children: [
-              Expanded(
-                child: Text(
+          RefreshIndicator(
+            onRefresh: _loadData,
+            child: ListView(
+              padding: EdgeInsets.fromLTRB(16, topInset + 8, 16, 104),
+              children: [
+                Text(
                   'Groups',
                   style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                        fontSize: 34,
                         fontWeight: FontWeight.w700,
                       ),
                 ),
-              ),
-              FilledButton.icon(
-                onPressed: _openCreateGroupDialog,
-                icon: const Icon(Icons.add),
-                label: const Text('New Group'),
-              ),
-            ],
+                const SizedBox(height: 16),
+                if (_groups.isEmpty)
+                  Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    child: Text(
+                      _isLoading
+                          ? 'Loading groups...'
+                          : 'No groups yet. Create one and invite members by email.',
+                      style: Theme.of(context).textTheme.bodyMedium,
+                    ),
+                  )
+                else
+                  ..._groups.map(
+                    (group) => Padding(
+                      padding: const EdgeInsets.only(bottom: 10),
+                      child: _GroupBar(
+                        group: group,
+                        onExpenseList: () => _openExpenseListPopup(group),
+                        onMemberBalance: () => _openMemberBalancePopup(group),
+                        onGroupActions: () => _openGroupActionsPopup(group),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
           ),
-          const SizedBox(height: 12),
-          _InvitationSection(
-            invitations: _pendingInvitations,
-            onAccept: (invite) => _respondToInvite(invite, 'accepted'),
-            onDecline: (invite) => _respondToInvite(invite, 'declined'),
-          ),
-          const SizedBox(height: 16),
-          if (_groups.isEmpty)
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(14),
+          if (_isLoading)
+            const Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              child: LinearProgressIndicator(minHeight: 2),
+            ),
+          Positioned(
+            right: 16,
+            bottom: 18,
+            child: FadeTransition(
+              opacity: CurvedAnimation(
+                parent: _fabEntranceController!,
+                curve: Curves.easeOut,
               ),
-              child: Text(
-                'No groups yet. Create one and invite members by email.',
-                style: Theme.of(context).textTheme.bodyMedium,
-              ),
-            )
-          else
-            ..._groups.map(
-              (group) => Padding(
-                padding: const EdgeInsets.only(bottom: 10),
-                child: _GroupBar(
-                  group: group,
-                  onOpen: () => _openGroupDetails(group),
-                  onInvite: () => _openInviteDialog(group),
+              child: ScaleTransition(
+                scale: Tween<double>(begin: 0.9, end: 1).animate(
+                  CurvedAnimation(
+                    parent: _fabEntranceController!,
+                    curve: Curves.easeOutBack,
+                  ),
+                ),
+                child: FloatingActionButton.extended(
+                  onPressed: _openCreateGroupDialog,
+                  backgroundColor: Colors.black,
+                  tooltip: 'New Group',
+                  icon: const Icon(Icons.add, color: Colors.white),
+                  label: const Text(
+                    'New Group',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
                 ),
               ),
             ),
+          ),
         ],
       ),
     );
@@ -1104,77 +1286,198 @@ class _GroupsScreenState extends State<GroupsScreen> {
 class _GroupBar extends StatelessWidget {
   const _GroupBar({
     required this.group,
-    required this.onOpen,
-    required this.onInvite,
+    required this.onExpenseList,
+    required this.onMemberBalance,
+    required this.onGroupActions,
   });
 
   final GroupSummary group;
-  final VoidCallback onOpen;
-  final VoidCallback onInvite;
+  final VoidCallback onExpenseList;
+  final VoidCallback onMemberBalance;
+  final VoidCallback onGroupActions;
 
   @override
   Widget build(BuildContext context) {
-    final positive = group.balance >= 0;
+    final totalExpenses = _safeDouble(() => group.totalExpenses);
+
     final money = _GroupsScreenState._money(group.balance);
+    final bool isOwed = group.balance > 0;
+    final bool isOwe = group.balance < 0;
+    final Color amountColor = isOwe
+        ? const Color(0xFFB33A2E)
+        : isOwed
+            ? const Color(0xFF1B7D3A)
+            : const Color(0xFF5C6470);
+    final String caption = isOwe
+        ? 'You owe'
+        : isOwed
+            ? 'You are owed'
+            : 'Settled up';
+    final statusLabel = group.settlementStatus ?? 'Active';
+    final isInactive = statusLabel.toLowerCase() == 'inactive';
+    final statusDotColor = isInactive ? const Color(0xFFD43C30) : const Color(0xFF1B7D3A);
 
     return Material(
       color: Colors.white,
       borderRadius: BorderRadius.circular(14),
-      child: InkWell(
-        onTap: onOpen,
-        borderRadius: BorderRadius.circular(14),
-        child: Padding(
-          padding: const EdgeInsets.all(14),
-          child: Row(
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              CircleAvatar(
-                backgroundColor: const Color(0xFFD8ECFA),
-                foregroundColor: const Color(0xFF1D6CAB),
-                child: Icon(_iconFor(group.icon)),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      group.name,
-                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                            fontWeight: FontWeight.w700,
-                          ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      '${group.memberCount} members • ${group.settlementStatus ?? 'Active'}',
-                      style: Theme.of(context).textTheme.bodySmall,
-                    ),
-                  ],
-                ),
-              ),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    money,
-                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                          color: positive ? const Color(0xFF1B7D3A) : const Color(0xFFB33A2E),
-                          fontWeight: FontWeight.w700,
+                  Expanded(
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        CircleAvatar(
+                          radius: 22,
+                          backgroundColor: const Color(0xFFD8ECFA),
+                          foregroundColor: const Color(0xFF1D6CAB),
+                          child: Icon(_iconFor(group.icon), size: 24),
                         ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: Text(
+                                      group.name,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                                            fontWeight: FontWeight.w800,
+                                          ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                '${group.memberCount} members  •  Total spending: ${_GroupsScreenState._money(totalExpenses)}',
+                                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                                      color: const Color(0xFF3A4450),
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
-                  const SizedBox(height: 2),
-                  Text(
-                    positive ? 'You are owed' : 'You owe',
-                    style: Theme.of(context).textTheme.bodySmall,
+                  const SizedBox(width: 10),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      Text(
+                        money,
+                        style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                              color: amountColor,
+                              fontWeight: FontWeight.w800,
+                            ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        caption,
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                              fontWeight: FontWeight.w600,
+                            ),
+                      ),
+                      const SizedBox(height: 8),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFF3F8FD),
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Container(
+                              width: 8,
+                              height: 8,
+                              decoration: BoxDecoration(
+                                color: statusDotColor,
+                                shape: BoxShape.circle,
+                              ),
+                            ),
+                            const SizedBox(width: 6),
+                            Text(
+                              statusLabel,
+                              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
                   ),
-                  const SizedBox(height: 4),
-                  TextButton(onPressed: onInvite, child: const Text('Invite')),
+                ],
+              ),
+              const SizedBox(height: 16),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: onExpenseList,
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        side: BorderSide(color: Colors.black.withAlpha(25)),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                      child: const Text('Expense List'),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: onMemberBalance,
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        side: BorderSide(color: Colors.black.withAlpha(25)),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                      child: const Text('Member Balance'),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: FilledButton.tonal(
+                      onPressed: onGroupActions,
+                      style: FilledButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                      child: const Text('Group Actions'),
+                    ),
+                  ),
                 ],
               ),
             ],
-          ),
         ),
       ),
     );
+  }
+
+  double _safeDouble(double Function() reader) {
+    try {
+      return reader();
+    } catch (_) {
+      return 0;
+    }
   }
 
   static IconData _iconFor(String iconName) {
@@ -1190,6 +1493,44 @@ class _GroupBar extends StatelessWidget {
       default:
         return Icons.group;
     }
+  }
+}
+
+class _QuickStat extends StatelessWidget {
+  const _QuickStat({required this.label, this.value});
+
+  final String label;
+  final String? value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF4F8FC),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: value == null
+          ? Text(
+              label,
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: Colors.black87,
+                    fontWeight: FontWeight.w600,
+                  ),
+            )
+          : RichText(
+              text: TextSpan(
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.black87),
+                children: [
+                  TextSpan(
+                    text: '$label: ',
+                    style: const TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                  TextSpan(text: value),
+                ],
+              ),
+            ),
+    );
   }
 }
 
