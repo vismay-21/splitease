@@ -4,6 +4,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import 'register_screen.dart';
+
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
 
@@ -73,26 +75,23 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
-  Future<void> _createAccount() async {
-    if (!_hasValidEmail || _passwordController.text.length < 6) {
-      _showMessage('Use a valid email and a password with at least 6 characters.');
-      return;
-    }
-
+  Future<void> _openCreateAccount() async {
     setState(() => _isSigningUp = true);
 
     try {
-      await _client.auth.signUp(
-        email: _email,
-        password: _passwordController.text,
-        emailRedirectTo: kIsWeb ? null : _mobileAuthRedirectUrl,
-      );
+      final createdEmail = await Navigator.of(
+        context,
+      ).push<String>(MaterialPageRoute(builder: (_) => const RegisterScreen()));
 
-      _showMessage('Account created. Check your email for verification if required.');
-    } on AuthException catch (error) {
-      _showMessage(error.message);
-    } catch (_) {
-      _showMessage('Something went wrong while creating your account.');
+      if (!mounted || createdEmail == null || createdEmail.isEmpty) {
+        return;
+      }
+
+      _emailController.text = createdEmail;
+      _passwordController.clear();
+      _showMessage(
+        'Account created. Please sign in with your email and password.',
+      );
     } finally {
       if (mounted) {
         setState(() => _isSigningUp = false);
@@ -212,12 +211,16 @@ class _LoginScreenState extends State<LoginScreen> {
                             Align(
                               alignment: Alignment.centerRight,
                               child: TextButton(
-                                onPressed: _isSendingResetLink ? null : _forgotPassword,
+                                onPressed: _isSendingResetLink
+                                    ? null
+                                    : _forgotPassword,
                                 child: _isSendingResetLink
                                     ? const SizedBox(
                                         width: 16,
                                         height: 16,
-                                        child: CircularProgressIndicator(strokeWidth: 2),
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                        ),
                                       )
                                     : const Text('Forgot password?'),
                               ),
@@ -236,7 +239,9 @@ class _LoginScreenState extends State<LoginScreen> {
                                   label: 'Sign In',
                                   icon: Icons.login,
                                   loading: _isSigningIn,
-                                  onPressed: _isSigningIn || _isSigningUp ? null : _signIn,
+                                  onPressed: _isSigningIn || _isSigningUp
+                                      ? null
+                                      : _signIn,
                                   primary: true,
                                 ),
                               ),
@@ -255,8 +260,9 @@ class _LoginScreenState extends State<LoginScreen> {
                                   label: 'Create New Account',
                                   icon: Icons.person_add_alt_1,
                                   loading: _isSigningUp,
-                                  onPressed:
-                                      _isSigningIn || _isSigningUp ? null : _createAccount,
+                                  onPressed: _isSigningIn || _isSigningUp
+                                      ? null
+                                      : _openCreateAccount,
                                   primary: false,
                                 ),
                               ),
@@ -302,7 +308,7 @@ class _HeaderLogoArea extends StatelessWidget {
           ),
           const SizedBox(height: 14),
           const Text(
-            'SpliTease',
+            'SplitEase',
             style: TextStyle(
               fontSize: 30,
               fontWeight: FontWeight.w800,
@@ -374,10 +380,12 @@ class _AnimatedActionButtonState extends State<_AnimatedActionButton>
                 onPressed: widget.onPressed,
                 style: ElevatedButton.styleFrom(
                   elevation: widget.primary ? 8 : 1,
-                  backgroundColor:
-                      widget.primary ? const Color(0xFF1D6CAB) : Colors.white,
-                  foregroundColor:
-                      widget.primary ? Colors.white : const Color(0xFF1D6CAB),
+                  backgroundColor: widget.primary
+                      ? const Color(0xFF1D6CAB)
+                      : Colors.white,
+                  foregroundColor: widget.primary
+                      ? Colors.white
+                      : const Color(0xFF1D6CAB),
                   side: widget.primary
                       ? BorderSide.none
                       : const BorderSide(color: Color(0xFF1D6CAB), width: 1.4),
