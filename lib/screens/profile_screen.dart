@@ -71,28 +71,15 @@ class _ProfileScreenState extends State<ProfileScreen> {
   Widget _buildHeader() {
     return Padding(
       padding: const EdgeInsets.fromLTRB(24, 16, 24, 12),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Text(
-            'Your profile',
-            style: TextStyle(
-              fontSize: 34,
-              height: 1.1,
-              fontWeight: FontWeight.w400,
-              color: textDark,
-              letterSpacing: -1.2,
-            ),
-          ),
-          Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: cardColor.withOpacity(0.5),
-              shape: BoxShape.circle,
-            ),
-            child: Icon(Icons.menu, color: textDark),
-          ),
-        ],
+      child: Text(
+        'Your profile',
+        style: TextStyle(
+          fontSize: 34,
+          height: 1.1,
+          fontWeight: FontWeight.w400,
+          color: textDark,
+          letterSpacing: -1.2,
+        ),
       ),
     );
   }
@@ -191,7 +178,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
           _buildSettingsTile(
             context,
             icon: Icons.account_balance_wallet_outlined,
-            title: _upiId,
+            title: 'UPI ID: $_upiId',
             onTap: () async {
               await Clipboard.setData(ClipboardData(text: _upiId));
               if (!context.mounted) {
