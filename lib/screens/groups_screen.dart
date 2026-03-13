@@ -117,8 +117,7 @@ class _GroupsScreenState extends State<GroupsScreen> {
       }
       setState(() {
         _isLoading = false;
-        _loadError =
-            'Could not load groups data. Make sure groups, group_members, and group_invitations tables exist. (${error.message})';
+        _loadError = _friendlyLoadError(error);
       });
     } catch (_) {
       if (!mounted) {
@@ -148,7 +147,7 @@ class _GroupsScreenState extends State<GroupsScreen> {
 
     final groupRows = await _client
         .from('groups')
-        .select('id,name,icon,total_expenses,total_owed,balance,settlement_status')
+      .select('id,name,icon,created_by,total_expenses,total_owed,balance,settlement_status')
         .inFilter('id', groupIds) as List<dynamic>;
 
     final memberCounts = await _fetchMemberCounts(groupIds);
@@ -165,6 +164,7 @@ class _GroupsScreenState extends State<GroupsScreen> {
           id: groupId,
           name: row['name']?.toString() ?? 'Unnamed Group',
           icon: row['icon']?.toString() ?? 'group',
+          createdByUserId: row['created_by']?.toString() ?? '',
           totalExpenses: _asDouble(row['total_expenses']),
           totalOwed: _asDouble(row['total_owed']),
           balance: _asDouble(row['balance']),
@@ -313,7 +313,9 @@ class _GroupsScreenState extends State<GroupsScreen> {
                 return _GroupDetailsView(
                   group: group,
                   details: snapshot.data!,
+                  currentUserId: _currentUser?.id,
                   onPay: (member) => _openPaymentPopup(group, member),
+                  onRemoveMember: (member) => _removeMemberFromGroup(group, member),
                   onAddExpense: () => _openAddExpenseDialog(group),
                   onAddMembers: () => _openAddMemberDialog(group),
                 );
@@ -673,17 +675,15 @@ class _GroupsScreenState extends State<GroupsScreen> {
                         orElse: () => members.first,
                       );
 
-                      await _client.from('group_expenses').insert({
-                        'group_id': group.id,
-                        'description': description,
-                        'amount': amount,
-                        'paid_by_user_id': payer.userId,
-                        'paid_by_name': payer.displayName,
-                        'expense_date': DateTime.now().toIso8601String(),
-                        'owes_summary': summaryController.text.trim().isEmpty
+                      await _client.rpc('add_group_expense_equal_split', params: {
+                        '_group_id': group.id,
+                        '_description': description,
+                        '_amount': amount,
+                        '_paid_by_user_id': payer.userId,
+                        '_owes_summary': summaryController.text.trim().isEmpty
                             ? null
                             : summaryController.text.trim(),
-                        'created_by': _currentUser?.id,
+                        '_bill_image_url': null,
                       });
 
                       if (!mounted) {
@@ -866,20 +866,15 @@ class _GroupsScreenState extends State<GroupsScreen> {
     }
 
     try {
-      await _client.from('group_invitations').update({
-        'status': nextStatus,
-        'responded_at': DateTime.now().toIso8601String(),
-      }).eq('id', invite.id);
-
       if (nextStatus == 'accepted') {
-        await _client.from('group_members').upsert({
-          'group_id': invite.groupId,
-          'user_id': user.id,
-          'display_name': invite.inviteeName ?? user.email,
-          'upi_id': invite.inviteeUpi,
-          'status': 'active',
-          'role': 'member',
+        await _client.rpc('accept_group_invitation', params: {
+          '_invite_id': invite.id,
         });
+      } else {
+        await _client.from('group_invitations').update({
+          'status': nextStatus,
+          'responded_at': DateTime.now().toIso8601String(),
+        }).eq('id', invite.id);
       }
 
       if (!mounted) {
@@ -905,6 +900,53 @@ class _GroupsScreenState extends State<GroupsScreen> {
     }
   }
 
+  Future<void> _removeMemberFromGroup(
+    GroupSummary group,
+    GroupMemberBalance member,
+  ) async {
+    final user = _currentUser;
+    if (user == null) {
+      return;
+    }
+
+    if (member.balance.abs() > 0.009) {
+      _showMessage('Settle member balance before removing from group.');
+      return;
+    }
+
+    final isSelf = member.userId == user.id;
+    final canRemove = group.createdByUserId == user.id || isSelf;
+    if (!canRemove) {
+      _showMessage('Only group creator can remove members.');
+      return;
+    }
+
+    try {
+      await _client
+          .from('group_members')
+          .delete()
+          .eq('group_id', group.id)
+          .eq('user_id', member.userId);
+
+      if (!mounted) {
+        return;
+      }
+
+      _showMessage(isSelf ? 'You left the group.' : '${member.memberName} removed.');
+      await _loadData();
+    } on PostgrestException catch (error) {
+      if (!mounted) {
+        return;
+      }
+      _showMessage('Could not remove member (${error.message}).');
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+      _showMessage('Unable to remove member right now.');
+    }
+  }
+
   void _showMessage(String message) {
     if (!mounted) {
       return;
@@ -913,6 +955,24 @@ class _GroupsScreenState extends State<GroupsScreen> {
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
       ..showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  String _friendlyLoadError(PostgrestException error) {
+    final code = error.code ?? '';
+    final message = error.message.toLowerCase();
+
+    if (code == '42P01' ||
+        code == 'PGRST205' ||
+        message.contains('could not find the table') ||
+        (message.contains('relation') && message.contains('does not exist'))) {
+      return 'Could not load groups data. Missing table(s): groups, group_members, group_invitations, group_expenses, or group_settlements. Run the migration in supabase/migrations/20260313_groups_schema.sql.';
+    }
+
+    if (code == '42501' || message.contains('permission denied')) {
+      return 'Could not load groups data due to permissions. Check Supabase RLS policies and table grants for authenticated users.';
+    }
+
+    return 'Could not load groups data. ${error.message}';
   }
 
   static String _memberSuffix(String? id) {
@@ -1213,14 +1273,18 @@ class _GroupDetailsView extends StatelessWidget {
   const _GroupDetailsView({
     required this.group,
     required this.details,
+    required this.currentUserId,
     required this.onPay,
+    required this.onRemoveMember,
     required this.onAddExpense,
     required this.onAddMembers,
   });
 
   final GroupSummary group;
   final GroupDetailsData details;
+  final String? currentUserId;
   final ValueChanged<GroupMemberBalance> onPay;
+  final ValueChanged<GroupMemberBalance> onRemoveMember;
   final VoidCallback onAddExpense;
   final VoidCallback onAddMembers;
 
@@ -1258,7 +1322,13 @@ class _GroupDetailsView extends StatelessWidget {
               children: [
                 _OverviewCard(group: group, details: details),
                 const SizedBox(height: 12),
-                _MemberBalanceCard(members: details.members, onPay: onPay),
+                _MemberBalanceCard(
+                  members: details.members,
+                  currentUserId: currentUserId,
+                  isOwner: group.createdByUserId == currentUserId,
+                  onPay: onPay,
+                  onRemoveMember: onRemoveMember,
+                ),
                 const SizedBox(height: 12),
                 _ExpenseListCard(expenses: details.expenses),
                 const SizedBox(height: 12),
@@ -1309,10 +1379,19 @@ class _OverviewCard extends StatelessWidget {
 }
 
 class _MemberBalanceCard extends StatelessWidget {
-  const _MemberBalanceCard({required this.members, required this.onPay});
+  const _MemberBalanceCard({
+    required this.members,
+    required this.currentUserId,
+    required this.isOwner,
+    required this.onPay,
+    required this.onRemoveMember,
+  });
 
   final List<GroupMemberBalance> members;
+  final String? currentUserId;
+  final bool isOwner;
   final ValueChanged<GroupMemberBalance> onPay;
+  final ValueChanged<GroupMemberBalance> onRemoveMember;
 
   @override
   Widget build(BuildContext context) {
@@ -1343,6 +1422,14 @@ class _MemberBalanceCard extends StatelessWidget {
                             onPressed: member.balance == 0 ? null : () => onPay(member),
                             child: const Text('Pay'),
                           ),
+                          const SizedBox(width: 8),
+                          if (isOwner || member.userId == currentUserId)
+                            OutlinedButton(
+                              onPressed: () => onRemoveMember(member),
+                              child: Text(
+                                member.userId == currentUserId ? 'Leave' : 'Remove',
+                              ),
+                            ),
                         ],
                       ),
                     ),
@@ -1524,6 +1611,7 @@ class GroupSummary {
     required this.id,
     required this.name,
     required this.icon,
+    required this.createdByUserId,
     required this.totalExpenses,
     required this.totalOwed,
     required this.balance,
@@ -1534,6 +1622,7 @@ class GroupSummary {
   final String id;
   final String name;
   final String icon;
+  final String createdByUserId;
   final double totalExpenses;
   final double totalOwed;
   final double balance;

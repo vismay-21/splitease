@@ -37,12 +37,33 @@ create table if not exists public.group_invitations (
   invitee_upi text,
   status text not null default 'pending' check (status in ('pending', 'accepted', 'declined', 'cancelled')),
   created_at timestamptz not null default timezone('utc', now()),
-  responded_at timestamptz,
-  unique (group_id, invitee_email, status)
+  responded_at timestamptz
 );
 
 alter table public.group_invitations add column if not exists invitee_name text;
 alter table public.group_invitations add column if not exists invitee_upi text;
+alter table public.group_invitations
+  drop constraint if exists group_invitations_group_id_invitee_email_status_key;
+
+with ranked_pending as (
+  select id,
+         row_number() over (
+           partition by group_id, invitee_email
+           order by created_at desc, id desc
+         ) as rn
+  from public.group_invitations
+  where status = 'pending'
+)
+update public.group_invitations gi
+set status = 'cancelled',
+    responded_at = timezone('utc', now())
+from ranked_pending rp
+where gi.id = rp.id and rp.rn > 1;
+
+drop index if exists uq_group_invitations_pending;
+create unique index uq_group_invitations_pending
+  on public.group_invitations(group_id, invitee_email)
+  where status = 'pending';
 
 create table if not exists public.group_expenses (
   id uuid primary key default gen_random_uuid(),
@@ -81,15 +102,22 @@ create index if not exists idx_group_settlements_group_id on public.group_settle
 
 create or replace function public.is_group_member(_group_id uuid)
 returns boolean
-language sql
+language plpgsql
 stable
+security definer
+set search_path = public
 as $$
-  select exists (
+begin
+  return exists (
     select 1
     from public.group_members gm
     where gm.group_id = _group_id and gm.user_id = auth.uid()
   );
+end;
 $$;
+
+revoke all on function public.is_group_member(uuid) from public;
+grant execute on function public.is_group_member(uuid) to authenticated;
 
 create or replace function public.current_user_email()
 returns text
@@ -99,17 +127,70 @@ as $$
   select lower(coalesce((auth.jwt() ->> 'email'), ''));
 $$;
 
+create or replace function public.is_invited_to_group(_group_id uuid)
+returns boolean
+language plpgsql
+stable
+security definer
+set search_path = public
+as $$
+begin
+  return exists (
+    select 1
+    from public.group_invitations gi
+    where gi.group_id = _group_id
+      and lower(gi.invitee_email::text) = public.current_user_email()
+      and gi.status in ('pending', 'accepted')
+  );
+end;
+$$;
+
+revoke all on function public.is_invited_to_group(uuid) from public;
+grant execute on function public.is_invited_to_group(uuid) to authenticated;
+
 alter table public.groups enable row level security;
 alter table public.group_members enable row level security;
 alter table public.group_invitations enable row level security;
 alter table public.group_expenses enable row level security;
 alter table public.group_settlements enable row level security;
 
+grant usage on schema public to anon, authenticated;
+grant select on public.groups to authenticated;
+grant select, insert, update, delete on public.group_members to authenticated;
+grant select, insert, update on public.group_invitations to authenticated;
+grant select, insert, update on public.group_expenses to authenticated;
+grant select, insert, update on public.group_settlements to authenticated;
+
+drop policy if exists "group members can read groups" on public.groups;
+drop policy if exists "signed users can create groups" on public.groups;
+drop policy if exists "group creator can update groups" on public.groups;
+drop policy if exists "group creator can delete groups" on public.groups;
+
+drop policy if exists "members can read group_members" on public.group_members;
+drop policy if exists "creator can add members" on public.group_members;
+drop policy if exists "members can update own membership" on public.group_members;
+drop policy if exists "creator can update any membership" on public.group_members;
+drop policy if exists "members can leave group" on public.group_members;
+drop policy if exists "creator can remove members" on public.group_members;
+
+drop policy if exists "invitees and group members can read invitations" on public.group_invitations;
+drop policy if exists "group members can send invitations" on public.group_invitations;
+drop policy if exists "invitees can accept or decline" on public.group_invitations;
+drop policy if exists "inviter can cancel invitation" on public.group_invitations;
+
+drop policy if exists "members can read group_expenses" on public.group_expenses;
+drop policy if exists "members can create group_expenses" on public.group_expenses;
+drop policy if exists "expense creator can update expense" on public.group_expenses;
+
+drop policy if exists "members can read settlements" on public.group_settlements;
+drop policy if exists "payer can create settlements" on public.group_settlements;
+drop policy if exists "payer can update own settlements" on public.group_settlements;
+
 -- groups policies
 create policy "group members can read groups"
   on public.groups
   for select
-  using (public.is_group_member(id));
+  using (public.is_group_member(id) or public.is_invited_to_group(id));
 
 create policy "signed users can create groups"
   on public.groups
@@ -144,13 +225,7 @@ create policy "creator can add members"
     )
     or (
       user_id = auth.uid()
-      and exists (
-        select 1
-        from public.group_invitations gi
-        where gi.group_id = group_id
-          and lower(gi.invitee_email::text) = public.current_user_email()
-          and gi.status = 'accepted'
-      )
+      and public.is_invited_to_group(group_id)
     )
   );
 
@@ -171,6 +246,22 @@ create policy "creator can update any membership"
     )
   )
   with check (
+    exists (
+      select 1
+      from public.groups g
+      where g.id = group_id and g.created_by = auth.uid()
+    )
+  );
+
+create policy "members can leave group"
+  on public.group_members
+  for delete
+  using (user_id = auth.uid());
+
+create policy "creator can remove members"
+  on public.group_members
+  for delete
+  using (
     exists (
       select 1
       from public.groups g
@@ -344,3 +435,180 @@ end;
 $$;
 
 grant execute on function public.create_group_with_owner(text, text) to authenticated;
+
+create or replace function public.add_group_expense_equal_split(
+  _group_id uuid,
+  _description text,
+  _amount numeric,
+  _paid_by_user_id uuid,
+  _owes_summary text default null,
+  _bill_image_url text default null
+)
+returns uuid
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  new_expense_id uuid;
+  member_count integer;
+  share_per_member numeric(12, 2);
+  payer_name text;
+  generated_summary text;
+begin
+  if auth.uid() is null then
+    raise exception 'Authentication required';
+  end if;
+
+  if _amount is null or _amount <= 0 then
+    raise exception 'Amount must be greater than zero';
+  end if;
+
+  if not public.is_group_member(_group_id) then
+    raise exception 'Only group members can add expenses';
+  end if;
+
+  select count(*)
+    into member_count
+    from public.group_members gm
+   where gm.group_id = _group_id and gm.status = 'active';
+
+  if member_count <= 0 then
+    raise exception 'No active members found in this group';
+  end if;
+
+  select coalesce(gm.display_name, auth.jwt() ->> 'email', 'Member')
+    into payer_name
+    from public.group_members gm
+   where gm.group_id = _group_id and gm.user_id = _paid_by_user_id
+   limit 1;
+
+  if payer_name is null then
+    raise exception 'Payer is not a member of this group';
+  end if;
+
+  share_per_member := round(_amount / member_count::numeric, 2);
+
+  if _owes_summary is null then
+    select string_agg(
+             format(
+               '%s owes %s Rs %s',
+               coalesce(gm.display_name, 'Member'),
+               payer_name,
+               to_char(share_per_member, 'FM999999990.00')
+             ),
+             ', '
+           )
+      into generated_summary
+      from public.group_members gm
+     where gm.group_id = _group_id
+       and gm.status = 'active'
+       and gm.user_id <> _paid_by_user_id;
+  else
+    generated_summary := _owes_summary;
+  end if;
+
+  insert into public.group_expenses (
+    group_id,
+    description,
+    amount,
+    paid_by_user_id,
+    paid_by_name,
+    expense_date,
+    owes_summary,
+    bill_image_url,
+    created_by
+  )
+  values (
+    _group_id,
+    _description,
+    _amount,
+    _paid_by_user_id,
+    payer_name,
+    current_date,
+    generated_summary,
+    _bill_image_url,
+    auth.uid()
+  )
+  returning id into new_expense_id;
+
+  update public.group_members
+     set balance = balance + case
+       when user_id = _paid_by_user_id then (share_per_member * (member_count - 1))
+       else (-share_per_member)
+     end
+   where group_id = _group_id and status = 'active';
+
+  return new_expense_id;
+end;
+$$;
+
+revoke all on function public.add_group_expense_equal_split(uuid, text, numeric, uuid, text, text) from public;
+grant execute on function public.add_group_expense_equal_split(uuid, text, numeric, uuid, text, text) to authenticated;
+
+create or replace function public.accept_group_invitation(_invite_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  invite_row public.group_invitations%rowtype;
+  current_email text;
+begin
+  if auth.uid() is null then
+    raise exception 'Authentication required';
+  end if;
+
+  current_email := public.current_user_email();
+
+  select *
+    into invite_row
+    from public.group_invitations gi
+   where gi.id = _invite_id
+   limit 1;
+
+  if not found then
+    raise exception 'Invitation not found';
+  end if;
+
+  if lower(invite_row.invitee_email::text) <> current_email then
+    raise exception 'Invitation does not belong to current user';
+  end if;
+
+  if invite_row.status not in ('pending', 'accepted') then
+    raise exception 'Invitation is not pending';
+  end if;
+
+  insert into public.group_members (group_id, user_id, display_name, upi_id, role, status)
+  values (
+    invite_row.group_id,
+    auth.uid(),
+    coalesce(invite_row.invitee_name, auth.jwt() ->> 'email', 'Member'),
+    invite_row.invitee_upi,
+    'member',
+    'active'
+  )
+  on conflict (group_id, user_id)
+  do update
+  set display_name = excluded.display_name,
+      upi_id = coalesce(excluded.upi_id, public.group_members.upi_id),
+      status = 'active';
+
+  update public.group_invitations
+     set status = 'accepted',
+         responded_at = timezone('utc', now())
+   where id = _invite_id;
+
+    update public.group_invitations
+      set status = 'cancelled',
+        responded_at = timezone('utc', now())
+    where group_id = invite_row.group_id
+      and lower(invitee_email::text) = lower(invite_row.invitee_email::text)
+      and status = 'pending'
+      and id <> _invite_id;
+end;
+$$;
+
+revoke all on function public.accept_group_invitation(uuid) from public;
+grant execute on function public.accept_group_invitation(uuid) to authenticated;

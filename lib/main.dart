@@ -45,8 +45,195 @@ class MyApp extends StatelessWidget {
         ),
         scaffoldBackgroundColor: const Color(0xFFEDF5FB),
       ),
-      home: const AuthGate(),
+      home: const StartupSetupGate(),
     );
+  }
+}
+
+class StartupSetupGate extends StatefulWidget {
+  const StartupSetupGate({super.key});
+
+  @override
+  State<StartupSetupGate> createState() => _StartupSetupGateState();
+}
+
+class _StartupSetupGateState extends State<StartupSetupGate> {
+  static const List<String> _requiredTables = <String>[
+    'groups',
+    'group_members',
+    'group_invitations',
+    'group_expenses',
+    'group_settlements',
+  ];
+
+  bool _isChecking = true;
+  bool _skipChecker = false;
+  List<String> _missingTables = <String>[];
+  String? _checkError;
+
+  @override
+  void initState() {
+    super.initState();
+    _checkSetup();
+  }
+
+  Future<void> _checkSetup() async {
+    if (_skipChecker) {
+      setState(() {
+        _skipChecker = false;
+      });
+    }
+
+    setState(() {
+      _isChecking = true;
+      _missingTables = <String>[];
+      _checkError = null;
+    });
+
+    final client = Supabase.instance.client;
+    final missing = <String>[];
+
+    for (final table in _requiredTables) {
+      try {
+        await client.from(table).select('*').limit(1);
+      } on PostgrestException catch (error) {
+        if (_isMissingTableError(error)) {
+          missing.add(table);
+          continue;
+        }
+
+        if (!_isPermissionError(error)) {
+          _checkError = '[${error.code ?? 'unknown'}] ${error.message}';
+        }
+      } catch (_) {
+        _checkError = 'Unable to verify backend setup right now.';
+      }
+    }
+
+    if (!mounted) {
+      return;
+    }
+
+    setState(() {
+      _missingTables = missing;
+      _isChecking = false;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_skipChecker) {
+      return const AuthGate();
+    }
+
+    if (_isChecking) {
+      return const Scaffold(
+        body: Center(child: CircularProgressIndicator()),
+      );
+    }
+
+    if (_missingTables.isEmpty && _checkError == null) {
+      return const AuthGate();
+    }
+
+    return Scaffold(
+      body: SafeArea(
+        child: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(20),
+            child: Container(
+              constraints: const BoxConstraints(maxWidth: 560),
+              padding: const EdgeInsets.all(20),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(18),
+                border: Border.all(color: const Color(0xFFD1E6F7)),
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(
+                    Icons.warning_amber_rounded,
+                    size: 46,
+                    color: Color(0xFF1D6CAB),
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    'Backend Setup Required',
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                          fontWeight: FontWeight.w700,
+                        ),
+                  ),
+                  const SizedBox(height: 10),
+                  Text(
+                    _missingTables.isNotEmpty
+                        ? 'Could not load groups because required tables are missing.'
+                        : 'Could not verify backend setup.',
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context).textTheme.bodyMedium,
+                  ),
+                  if (_missingTables.isNotEmpty) ...[
+                    const SizedBox(height: 14),
+                    Text(
+                      'Missing: ${_missingTables.join(', ')}',
+                      textAlign: TextAlign.center,
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                            fontWeight: FontWeight.w600,
+                          ),
+                    ),
+                  ],
+                  if (_checkError != null) ...[
+                    const SizedBox(height: 10),
+                    Text(
+                      _checkError!,
+                      textAlign: TextAlign.center,
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                  ],
+                  const SizedBox(height: 14),
+                  Text(
+                    'Run SQL migration:\nsupabase/migrations/20260313_groups_schema.sql',
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                  const SizedBox(height: 16),
+                  FilledButton.icon(
+                    onPressed: _checkSetup,
+                    icon: const Icon(Icons.refresh),
+                    label: const Text('Recheck Setup'),
+                  ),
+                  const SizedBox(height: 10),
+                  TextButton(
+                    onPressed: () {
+                      setState(() {
+                        _skipChecker = true;
+                      });
+                    },
+                    child: const Text('Continue Anyway'),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  bool _isMissingTableError(PostgrestException error) {
+    final code = error.code ?? '';
+    final message = error.message.toLowerCase();
+    return code == '42P01' ||
+        code == 'PGRST205' ||
+        message.contains('could not find the table') ||
+        (message.contains('relation') && message.contains('does not exist'));
+  }
+
+  bool _isPermissionError(PostgrestException error) {
+    final code = error.code ?? '';
+    final message = error.message.toLowerCase();
+    return code == '42501' || message.contains('permission denied');
   }
 }
 
