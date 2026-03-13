@@ -1,3 +1,5 @@
+import 'dart:ui';
+
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -81,12 +83,6 @@ class _MainNavPageState extends State<MainNavPage> {
   final PageController _pageController = PageController();
   int _selectedIndex = 0;
 
-  static const List<String> _titles = [
-    'Home',
-    'Groups',
-    'Transactions',
-    'Profile',
-  ];
 
   static final List<Widget> _pages = [
     const HomeScreen(),
@@ -117,15 +113,7 @@ class _MainNavPageState extends State<MainNavPage> {
     final colorScheme = Theme.of(context).colorScheme;
 
     return Scaffold(
-      appBar: AppBar(
-        elevation: 0,
-        backgroundColor: colorScheme.surface,
-        title: Text(
-          _titles[_selectedIndex],
-          style: TextStyle(color: colorScheme.onSurface),
-        ),
-        centerTitle: true,
-      ),
+      backgroundColor: colorScheme.surface,
       body: PageView(
         controller: _pageController,
         physics: const BouncingScrollPhysics(),
@@ -136,33 +124,53 @@ class _MainNavPageState extends State<MainNavPage> {
         },
         children: _pages,
       ),
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: _selectedIndex,
-        onDestinationSelected: _onItemTapped,
-        labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
-        elevation: 10,
-        destinations: const [
-          NavigationDestination(
-            icon: Icon(Icons.home_outlined),
-            selectedIcon: Icon(Icons.home_filled),
-            label: 'Home',
+      floatingActionButton: _selectedIndex == 0
+          ? FloatingActionButton(
+              onPressed: () {},
+              backgroundColor: Colors.black,
+              tooltip: 'Add expense',
+              child: const Icon(Icons.add, color: Colors.white),
+            )
+          : null,
+      floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
+      bottomNavigationBar: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(30),
+          child: BackdropFilter(
+            filter: ImageFilter.blur(sigmaX: 15, sigmaY: 15),
+            child: NavigationBar(
+              backgroundColor: const Color.fromRGBO(255, 255, 255, 0.75),
+              surfaceTintColor: Colors.transparent,
+              selectedIndex: _selectedIndex,
+              onDestinationSelected: _onItemTapped,
+              labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
+              elevation: 0,
+              destinations: const [
+                NavigationDestination(
+                  icon: Icon(Icons.home_outlined),
+                  selectedIcon: Icon(Icons.home_filled),
+                  label: 'Home',
+                ),
+                NavigationDestination(
+                  icon: Icon(Icons.group_outlined),
+                  selectedIcon: Icon(Icons.group),
+                  label: 'Groups',
+                ),
+                NavigationDestination(
+                  icon: Icon(Icons.swap_horiz_outlined),
+                  selectedIcon: Icon(Icons.swap_horiz),
+                  label: 'Transactions',
+                ),
+                NavigationDestination(
+                  icon: Icon(Icons.person_outline),
+                  selectedIcon: Icon(Icons.person),
+                  label: 'Profile',
+                ),
+              ],
+            ),
           ),
-          NavigationDestination(
-            icon: Icon(Icons.group_outlined),
-            selectedIcon: Icon(Icons.group),
-            label: 'Groups',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.swap_horiz_outlined),
-            selectedIcon: Icon(Icons.swap_horiz),
-            label: 'Transactions',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.person_outline),
-            selectedIcon: Icon(Icons.person),
-            label: 'Profile',
-          ),
-        ],
+        ),
       ),
     );
   }
