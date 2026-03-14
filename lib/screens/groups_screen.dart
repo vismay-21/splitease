@@ -38,6 +38,7 @@ final _fakeGroups = [
 
 class _GroupTransaction {
   const _GroupTransaction({
+    required this.sortKey,
     required this.date,
     required this.title,
     required this.subtitle,
@@ -48,6 +49,7 @@ class _GroupTransaction {
     this.settlementDetails,
   });
 
+  final DateTime sortKey;
   final String date;
   final String title;
   final String subtitle;
@@ -100,11 +102,13 @@ class _CounterpartyLedgerLine {
     required this.fromName,
     required this.toName,
     required this.amountCents,
+    required this.occurredAt,
   });
 
   final String fromName;
   final String toName;
   final int amountCents;
+  final DateTime occurredAt;
 }
 
 class _SettleUpSummary {
@@ -113,12 +117,30 @@ class _SettleUpSummary {
     required this.counterpartyName,
     required this.netCents,
     required this.ledgerLines,
+    required this.latestActivityAt,
   });
 
   final String counterpartyUserId;
   final String counterpartyName;
   int netCents;
   final List<_CounterpartyLedgerLine> ledgerLines;
+  DateTime latestActivityAt;
+}
+
+enum _PaymentApprovalStatus { pending, confirmed, denied }
+
+class _PayReceiveAmounts {
+  const _PayReceiveAmounts({required this.toPay, required this.toReceive});
+
+  final double toPay;
+  final double toReceive;
+}
+
+class GroupSettleUpIntent {
+  const GroupSettleUpIntent({required this.groupId, required this.counterpartyUserId});
+
+  final String groupId;
+  final String counterpartyUserId;
 }
 
 class _SettleMember {
@@ -133,8 +155,9 @@ class _SettleMember {
   final String? upiId;
 }
 
-const _fakeTransactions = [
+final _fakeTransactions = [
   _GroupTransaction(
+    sortKey: DateTime.utc(2026, 4, 4, 9, 0),
     date: 'Apr 04',
     title: 'Grocery',
     subtitle: 'You paid',
@@ -143,6 +166,7 @@ const _fakeTransactions = [
     icon: Icons.shopping_bag_outlined,
   ),
   _GroupTransaction(
+    sortKey: DateTime.utc(2026, 5, 2, 9, 0),
     date: 'May 02',
     title: 'Train refund price',
     subtitle: 'You lent',
@@ -151,6 +175,7 @@ const _fakeTransactions = [
     icon: Icons.train,
   ),
   _GroupTransaction(
+    sortKey: DateTime.utc(2026, 5, 11, 9, 0),
     date: 'May 11',
     title: 'Dinner',
     subtitle: 'You paid',
@@ -159,6 +184,7 @@ const _fakeTransactions = [
     icon: Icons.restaurant_outlined,
   ),
   _GroupTransaction(
+    sortKey: DateTime.utc(2026, 5, 23, 9, 0),
     date: 'May 23',
     title: 'Taxi share',
     subtitle: 'You paid',
@@ -167,6 +193,7 @@ const _fakeTransactions = [
     icon: Icons.directions_car_outlined,
   ),
   _GroupTransaction(
+    sortKey: DateTime.utc(2026, 6, 1, 9, 0),
     date: 'Jun 01',
     title: 'Movie night',
     subtitle: 'You lent',
@@ -178,6 +205,35 @@ const _fakeTransactions = [
 
 class GroupsScreen extends StatefulWidget {
   const GroupsScreen({super.key});
+
+  static GroupSettleUpIntent? _pendingSettleUpIntent;
+  static String? _pendingGroupPopupId;
+
+  static void setPendingSettleUpIntent({
+    required String groupId,
+    required String counterpartyUserId,
+  }) {
+    _pendingSettleUpIntent = GroupSettleUpIntent(
+      groupId: groupId,
+      counterpartyUserId: counterpartyUserId,
+    );
+  }
+
+  static GroupSettleUpIntent? takePendingSettleUpIntent() {
+    final intent = _pendingSettleUpIntent;
+    _pendingSettleUpIntent = null;
+    return intent;
+  }
+
+  static void setPendingGroupPopup({required String groupId}) {
+    _pendingGroupPopupId = groupId;
+  }
+
+  static String? takePendingGroupPopup() {
+    final groupId = _pendingGroupPopupId;
+    _pendingGroupPopupId = null;
+    return groupId;
+  }
 
   @override
   State<GroupsScreen> createState() => _GroupsScreenState();
@@ -332,6 +388,10 @@ class _GroupsScreenState extends State<GroupsScreen>
         _cachedGroups = List<GroupSummary>.from(_groups);
         _cachedInvitations = List<GroupInvitation>.from(_pendingInvitations);
       });
+
+      if (!_tryOpenPendingGroupPopup(groups)) {
+        _tryOpenPendingSettleUpIntent(groups);
+      }
     } on PostgrestException catch (error) {
       if (!mounted) {
         return;
@@ -355,6 +415,66 @@ class _GroupsScreenState extends State<GroupsScreen>
     }
   }
 
+  bool _tryOpenPendingGroupPopup(List<GroupSummary> groups) {
+    final pendingGroupId = GroupsScreen.takePendingGroupPopup();
+    if (pendingGroupId == null || pendingGroupId.isEmpty) {
+      return false;
+    }
+
+    GroupSummary? targetGroup;
+    for (final group in groups) {
+      if (group.id == pendingGroupId) {
+        targetGroup = group;
+        break;
+      }
+    }
+
+    if (targetGroup == null) {
+      _showMessage('Requested group not found.');
+      return false;
+    }
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+      _openGroupDetailPopup(targetGroup!);
+    });
+
+    return true;
+  }
+
+  void _tryOpenPendingSettleUpIntent(List<GroupSummary> groups) {
+    final intent = GroupsScreen.takePendingSettleUpIntent();
+    if (intent == null) {
+      return;
+    }
+
+    GroupSummary? targetGroup;
+    for (final group in groups) {
+      if (group.id == intent.groupId) {
+        targetGroup = group;
+        break;
+      }
+    }
+
+    if (targetGroup == null) {
+      _showMessage('Requested group not found.');
+      return;
+    }
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+      _openGroupDetailPopup(
+        targetGroup!,
+        initialSection: 'settleup',
+        focusCounterpartyUserId: intent.counterpartyUserId,
+      );
+    });
+  }
+
   Future<List<GroupSummary>> _fetchGroupsForUser(String userId) async {
     final memberships = await _client
         .from('group_members')
@@ -369,6 +489,21 @@ class _GroupsScreenState extends State<GroupsScreen>
     if (groupIds.isEmpty) {
       return <GroupSummary>[];
     }
+
+    final fallbackBalanceByGroupId = <String, double>{};
+    for (final row in memberships) {
+      final groupId = row['group_id']?.toString() ?? '';
+      if (groupId.isEmpty) {
+        continue;
+      }
+      fallbackBalanceByGroupId[groupId] = _asDouble(row['balance']);
+    }
+
+    final payReceiveByGroupId = await _computePayReceiveByGroup(
+      userId: userId,
+      groupIds: groupIds,
+      fallbackBalanceByGroupId: fallbackBalanceByGroupId,
+    );
 
     final groupRows = await _client
         .from('groups')
@@ -398,7 +533,10 @@ class _GroupsScreenState extends State<GroupsScreen>
               DateTime.now(),
           totalExpenses: _asDouble(row['total_expenses']),
           totalOwed: _asDouble(row['total_owed']),
-          balance: _asDouble(row['balance']),
+          balance: (payReceiveByGroupId[groupId]?.toReceive ?? 0) -
+              (payReceiveByGroupId[groupId]?.toPay ?? 0),
+          toPayAmount: payReceiveByGroupId[groupId]?.toPay ?? 0,
+          toReceiveAmount: payReceiveByGroupId[groupId]?.toReceive ?? 0,
           settlementStatus: row['settlement_status']?.toString(),
           memberCount: memberCounts[groupId] ?? 0,
         ),
@@ -407,6 +545,68 @@ class _GroupsScreenState extends State<GroupsScreen>
 
     summaries.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
     return summaries;
+  }
+
+  Future<Map<String, _PayReceiveAmounts>> _computePayReceiveByGroup({
+    required String userId,
+    required List<String> groupIds,
+    required Map<String, double> fallbackBalanceByGroupId,
+  }) async {
+    final rows = await _client
+        .from('group_settlements')
+        .select('group_id,payer_user_id,receiver_user_id,amount,method,status')
+        .inFilter('group_id', groupIds)
+        .eq('method', 'split')
+        .eq('status', 'pending') as List<dynamic>;
+
+    final obligationsByGroup = <String, List<SettlementTransfer>>{};
+    for (final row in rows) {
+      final groupId = row['group_id']?.toString() ?? '';
+      final payerUserId = row['payer_user_id']?.toString() ?? '';
+      final receiverUserId = row['receiver_user_id']?.toString() ?? '';
+      final amount = _asDouble(row['amount']);
+      if (groupId.isEmpty || payerUserId.isEmpty || receiverUserId.isEmpty || amount <= 0) {
+        continue;
+      }
+
+      obligationsByGroup.putIfAbsent(groupId, () => <SettlementTransfer>[]).add(
+            SettlementTransfer(
+              payerUserId: payerUserId,
+              payeeUserId: receiverUserId,
+              amountCents: (amount * 100).round(),
+            ),
+          );
+    }
+
+    final results = <String, _PayReceiveAmounts>{};
+    for (final groupId in groupIds) {
+      final obligations = obligationsByGroup[groupId] ?? <SettlementTransfer>[];
+
+      if (obligations.isNotEmpty) {
+        final minimized = computeMinimumSettlements(obligations: obligations);
+        var toPay = 0.0;
+        var toReceive = 0.0;
+
+        for (final transfer in minimized) {
+          if (transfer.payerUserId == userId) {
+            toPay += transfer.amountCents / 100;
+          }
+          if (transfer.payeeUserId == userId) {
+            toReceive += transfer.amountCents / 100;
+          }
+        }
+
+        results[groupId] = _PayReceiveAmounts(toPay: toPay, toReceive: toReceive);
+      } else {
+        final fallback = fallbackBalanceByGroupId[groupId] ?? 0;
+        results[groupId] = _PayReceiveAmounts(
+          toPay: fallback < 0 ? -fallback : 0,
+          toReceive: fallback > 0 ? fallback : 0,
+        );
+      }
+    }
+
+    return results;
   }
 
   Future<Map<String, String>> _fetchCreatorNames(List<String> groupIds) async {
@@ -569,9 +769,9 @@ class _GroupsScreenState extends State<GroupsScreen>
 
     final expenseRows = await _client
         .from('group_expenses')
-        .select('description,amount,paid_by_name,expense_date,owes_summary,bill_image_url')
+      .select('description,amount,paid_by_name,expense_date,owes_summary,bill_image_url,created_at')
         .eq('group_id', group.id)
-        .order('expense_date', ascending: false) as List<dynamic>;
+      .order('created_at', ascending: false) as List<dynamic>;
 
     final expenses = expenseRows
         .map(
@@ -580,6 +780,10 @@ class _GroupsScreenState extends State<GroupsScreen>
             amount: _asDouble(row['amount']),
             paidBy: row['paid_by_name']?.toString() ?? 'Unknown',
             date: DateTime.tryParse(row['expense_date']?.toString() ?? '') ?? DateTime.now(),
+            createdAt:
+                DateTime.tryParse(row['created_at']?.toString() ?? '')?.toLocal() ??
+                DateTime.tryParse(row['expense_date']?.toString() ?? '') ??
+                DateTime.now(),
             owesWhom: row['owes_summary']?.toString() ?? 'Split equally',
             billImageUrl: row['bill_image_url']?.toString(),
           ),
@@ -591,10 +795,11 @@ class _GroupsScreenState extends State<GroupsScreen>
     };
     final splitRows = await _client
         .from('group_settlements')
-        .select('payer_user_id,receiver_user_id,amount,method,status')
+      .select('payer_user_id,receiver_user_id,amount,method,status,created_at')
         .eq('group_id', group.id)
         .eq('method', 'split')
-        .eq('status', 'pending') as List<dynamic>;
+      .eq('status', 'pending')
+      .order('created_at', ascending: false) as List<dynamic>;
 
     final splitSettlementTransactions = splitRows
         .map((row) {
@@ -608,9 +813,13 @@ class _GroupsScreenState extends State<GroupsScreen>
           final debtorName = nameByUserId[debtorUserId] ?? 'Member';
           final creditorName = nameByUserId[creditorUserId] ?? 'Member';
           final isCredit = creditorUserId == _currentUser?.id;
+          final createdAt =
+              DateTime.tryParse(row['created_at']?.toString() ?? '')?.toLocal() ??
+              DateTime.now();
 
           return _GroupTransaction(
-            date: _formatDate(DateTime.now()).split(',').first,
+            sortKey: createdAt,
+            date: _formatDate(createdAt).split(',').first,
             title: '$debtorName pays $creditorName',
             subtitle: 'Saved split',
             amount: amount,
@@ -645,7 +854,8 @@ class _GroupsScreenState extends State<GroupsScreen>
     return expenses
         .map(
           (expense) => _GroupTransaction(
-            date: _formatDate(expense.date).split(',').first,
+            sortKey: expense.createdAt,
+            date: _formatDate(expense.createdAt).split(',').first,
             title: expense.description,
             subtitle: 'Paid by ${expense.paidBy}',
             amount: expense.amount,
@@ -662,6 +872,14 @@ class _GroupsScreenState extends State<GroupsScreen>
           ),
         )
         .toList();
+  }
+
+  List<_GroupTransaction> _sortTransactionsNewestFirst(
+    Iterable<_GroupTransaction> entries,
+  ) {
+    final sorted = List<_GroupTransaction>.from(entries);
+    sorted.sort((a, b) => b.sortKey.compareTo(a.sortKey));
+    return sorted;
   }
 
   Future<bool> _persistExpenseSplit({
@@ -776,6 +994,154 @@ class _GroupsScreenState extends State<GroupsScreen>
       return upiId;
     } catch (_) {
       return null;
+    }
+  }
+
+  Future<void> _sendPaymentConfirmationNotification({
+    required String groupId,
+    required String receiverUserId,
+    required String receiverName,
+    required double amount,
+    required String method,
+  }) async {
+    final user = _currentUser;
+    if (user == null || receiverUserId.isEmpty) {
+      return;
+    }
+
+    final senderName = _currentUserPreferredName(user);
+    final normalizedMethod = method.toLowerCase() == 'cash' ? 'cash' : 'upi';
+
+    try {
+      await _client.from('group_notifications').insert({
+        'group_id': groupId,
+        'sender_user_id': user.id,
+        'sender_name': senderName,
+        'receiver_user_id': receiverUserId,
+        'receiver_name': receiverName,
+        'category': 'payment_received_confirmation',
+        'method': normalizedMethod,
+        'amount': amount,
+        'status': 'pending',
+      });
+    } catch (_) {
+      // Keep payment flow uninterrupted if notification insertion fails.
+    }
+  }
+
+  Future<bool> _sendPaymentRequestNotification({
+    required String groupId,
+    required String receiverUserId,
+    required String receiverName,
+    required double amount,
+  }) async {
+    final user = _currentUser;
+    if (user == null || receiverUserId.isEmpty) {
+      return false;
+    }
+
+    final senderName = _currentUserPreferredName(user);
+
+    try {
+      await _client.from('group_notifications').insert({
+        'group_id': groupId,
+        'sender_user_id': user.id,
+        'sender_name': senderName,
+        'receiver_user_id': receiverUserId,
+        'receiver_name': receiverName,
+        'category': 'payment_request',
+        'method': 'request',
+        'amount': amount,
+        'status': 'pending',
+      });
+      return true;
+    } catch (_) {
+      // Keep UI responsive even if notification insert fails.
+      return false;
+    }
+  }
+
+  Future<Set<String>> _fetchPendingOutgoingPaymentRequests({
+    required String groupId,
+    required String senderUserId,
+  }) async {
+    if (groupId.isEmpty || senderUserId.isEmpty) {
+      return <String>{};
+    }
+
+    try {
+      final rows = await _client
+          .from('group_notifications')
+          .select('sender_user_id,receiver_user_id,status,created_at')
+          .eq('group_id', groupId)
+          .eq('category', 'payment_request')
+          .eq('sender_user_id', senderUserId)
+          .order('created_at', ascending: false) as List<dynamic>;
+
+      final latestStatusByPair = <String, String>{};
+      for (final row in rows) {
+        final senderId = row['sender_user_id']?.toString() ?? '';
+        final receiverId = row['receiver_user_id']?.toString() ?? '';
+        final status = row['status']?.toString().toLowerCase() ?? 'pending';
+        if (senderId.isEmpty || receiverId.isEmpty) {
+          continue;
+        }
+
+        final key = '$senderId|$receiverId';
+        if (latestStatusByPair.containsKey(key)) {
+          continue;
+        }
+        latestStatusByPair[key] = status;
+      }
+
+      return latestStatusByPair.entries
+          .where((entry) => entry.value == 'pending')
+          .map((entry) => entry.key)
+          .toSet();
+    } catch (_) {
+      return <String>{};
+    }
+  }
+
+  Future<Map<String, _PaymentApprovalStatus>> _fetchLatestPaymentApprovals(
+    String groupId,
+  ) async {
+    if (groupId.isEmpty) {
+      return <String, _PaymentApprovalStatus>{};
+    }
+
+    try {
+      final rows = await _client
+          .from('group_notifications')
+          .select('sender_user_id,receiver_user_id,status,created_at')
+          .eq('group_id', groupId)
+          .eq('category', 'payment_received_confirmation')
+          .order('created_at', ascending: false) as List<dynamic>;
+
+      final approvals = <String, _PaymentApprovalStatus>{};
+      for (final row in rows) {
+        final senderUserId = row['sender_user_id']?.toString() ?? '';
+        final receiverUserId = row['receiver_user_id']?.toString() ?? '';
+        final status = row['status']?.toString().toLowerCase() ?? 'pending';
+        if (senderUserId.isEmpty || receiverUserId.isEmpty) {
+          continue;
+        }
+
+        final key = '$senderUserId|$receiverUserId';
+        if (approvals.containsKey(key)) {
+          continue;
+        }
+
+        approvals[key] = switch (status) {
+          'confirmed' => _PaymentApprovalStatus.confirmed,
+          'denied' => _PaymentApprovalStatus.denied,
+          _ => _PaymentApprovalStatus.pending,
+        };
+      }
+
+      return approvals;
+    } catch (_) {
+      return <String, _PaymentApprovalStatus>{};
     }
   }
 
@@ -895,10 +1261,17 @@ class _GroupsScreenState extends State<GroupsScreen>
     );
   }
 
-  Future<void> _openGroupDetailPopup(GroupSummary group) async {
-    final youOwe = group.balance < 0 ? -group.balance : 0.0;
-    final youAreOwed = group.balance > 0 ? group.balance : 0.0;
+  Future<void> _openGroupDetailPopup(
+    GroupSummary group, {
+    String initialSection = 'transactions',
+    String? focusCounterpartyUserId,
+  }) async {
+    final youOwe = group.toPayAmount;
+    final youAreOwed = group.toReceiveAmount;
     List<_GroupTransaction> persistedTransactions = <_GroupTransaction>[];
+    var approvalByPair = <String, _PaymentApprovalStatus>{};
+    var pendingRequestPairs = <String>{};
+    final currentUserId = _currentUser?.id;
 
     try {
       final details = await _fetchGroupDetails(group);
@@ -910,6 +1283,14 @@ class _GroupsScreenState extends State<GroupsScreen>
       // Group popup will still open with current-session transactions.
     }
 
+    approvalByPair = await _fetchLatestPaymentApprovals(group.id);
+    if (currentUserId != null) {
+      pendingRequestPairs = await _fetchPendingOutgoingPaymentRequests(
+        groupId: group.id,
+        senderUserId: currentUserId,
+      );
+    }
+
     await showDialog<void>(
       context: context,
       builder: (context) {
@@ -917,21 +1298,21 @@ class _GroupsScreenState extends State<GroupsScreen>
         final maxWidth = MediaQuery.of(context).size.width * 0.92;
         final createdDate = _formatDate(group.createdAt);
         final localPreview = _groupPreviewTransactions[group.id] ?? <_GroupTransaction>[];
-        var transactions = List<_GroupTransaction>.from(
+        var transactions = _sortTransactionsNewestFirst(
           persistedTransactions.isNotEmpty ? persistedTransactions : localPreview,
         );
-        var selectedSection = 'transactions';
+        var selectedSection = initialSection;
 
         return StatefulBuilder(
           builder: (context, setModalState) {
             return Dialog(
               insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
-              backgroundColor: Colors.transparent,
+              backgroundColor: Colors.white,
               child: SizedBox(
                 height: maxHeight,
                 width: maxWidth,
                 child: ClipRRect(
-                  borderRadius: BorderRadius.circular(26),
+                  borderRadius: BorderRadius.circular(36),
                   child: Material(
                     color: Colors.white,
                     child: Stack(
@@ -1016,40 +1397,79 @@ class _GroupsScreenState extends State<GroupsScreen>
                                 ),
                                 const SizedBox(height: 12),
                                 Row(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
-                                    const Icon(Icons.person, size: 18, color: Color(0xFF5A6E82)),
-                                    const SizedBox(width: 6),
-                                    Text(
-                                      'Created by ${group.createdByName}',
-                                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                                            color: const Color(0xFF5A6E82),
+                                    Expanded(
+                                      child: Column(
+                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        children: [
+                                          Row(
+                                            children: [
+                                              const Icon(Icons.person, size: 18, color: Color(0xFF5A6E82)),
+                                              const SizedBox(width: 6),
+                                              Text(
+                                                'Created by ${group.createdByName}',
+                                                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                                                      color: const Color(0xFF5A6E82),
+                                                    ),
+                                              ),
+                                            ],
                                           ),
+                                          const SizedBox(height: 8),
+                                          Row(
+                                            children: [
+                                              const Icon(Icons.group, size: 18, color: Color(0xFF5A6E82)),
+                                              const SizedBox(width: 6),
+                                              Text(
+                                                '${group.memberCount} people',
+                                                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                                                      color: const Color(0xFF5A6E82),
+                                                    ),
+                                              ),
+                                            ],
+                                          ),
+                                          const SizedBox(height: 8),
+                                          Row(
+                                            children: [
+                                              const Icon(Icons.calendar_today, size: 18, color: Color(0xFF5A6E82)),
+                                              const SizedBox(width: 6),
+                                              Text(
+                                                'Created $createdDate',
+                                                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                                                      color: const Color(0xFF5A6E82),
+                                                    ),
+                                              ),
+                                            ],
+                                          ),
+                                        ],
+                                      ),
                                     ),
-                                  ],
-                                ),
-                                const SizedBox(height: 8),
-                                Row(
-                                  children: [
-                                    const Icon(Icons.group, size: 18, color: Color(0xFF5A6E82)),
-                                    const SizedBox(width: 6),
-                                    Text(
-                                      '${group.memberCount} people',
-                                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                                            color: const Color(0xFF5A6E82),
-                                          ),
-                                    ),
-                                  ],
-                                ),
-                                const SizedBox(height: 8),
-                                Row(
-                                  children: [
-                                    const Icon(Icons.calendar_today, size: 18, color: Color(0xFF5A6E82)),
-                                    const SizedBox(width: 6),
-                                    Text(
-                                      'Created $createdDate',
-                                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                                            color: const Color(0xFF5A6E82),
-                                          ),
+                                    const SizedBox(width: 12),
+                                    Padding(
+                                      padding: const EdgeInsets.only(top: 10),
+                                      child: FloatingActionButton(
+                                        heroTag: 'group-add-expense-${group.id}',
+                                        backgroundColor: const Color(0xFF1A4A8F),
+                                        foregroundColor: Colors.white,
+                                        onPressed: () => _openAddExpenseDialog(
+                                          group,
+                                          onPreviewGenerated: (computedTransactions) {
+                                            final existing = transactions;
+                                            final merged = _sortTransactionsNewestFirst(<_GroupTransaction>[
+                                              ...computedTransactions,
+                                              ...existing,
+                                            ]);
+
+                                            setState(() {
+                                              _groupPreviewTransactions[group.id] = merged;
+                                            });
+                                            setModalState(() {
+                                              transactions = List<_GroupTransaction>.from(merged);
+                                            });
+                                          },
+                                        ),
+                                        child: const Icon(Icons.add),
+                                      ),
                                     ),
                                   ],
                                 ),
@@ -1058,7 +1478,7 @@ class _GroupsScreenState extends State<GroupsScreen>
                           ],
                         ),
                       ),
-                      const Divider(height: 1),
+                      const SizedBox(height: 8),
 
                       // Owe / Owed cards
                       Padding(
@@ -1089,7 +1509,7 @@ class _GroupsScreenState extends State<GroupsScreen>
                           ],
                         ),
                       ),
-                      const Divider(height: 1),
+                      const SizedBox(height: 8),
 
                       // Section toggle
                       Padding(
@@ -1102,6 +1522,7 @@ class _GroupsScreenState extends State<GroupsScreen>
                                   width: double.infinity,
                                   child: Text('Transactions', textAlign: TextAlign.center),
                                 ),
+                                showCheckmark: false,
                                 selected: selectedSection == 'transactions',
                                 onSelected: (_) {
                                   setModalState(() {
@@ -1117,6 +1538,7 @@ class _GroupsScreenState extends State<GroupsScreen>
                                   width: double.infinity,
                                   child: Text('Balances', textAlign: TextAlign.center),
                                 ),
+                                showCheckmark: false,
                                 selected: selectedSection == 'balances',
                                 onSelected: (_) {
                                   setModalState(() {
@@ -1132,6 +1554,7 @@ class _GroupsScreenState extends State<GroupsScreen>
                                   width: double.infinity,
                                   child: Text('Settle up', textAlign: TextAlign.center),
                                 ),
+                                showCheckmark: false,
                                 selected: selectedSection == 'settleup',
                                 onSelected: (_) {
                                   setModalState(() {
@@ -1143,7 +1566,7 @@ class _GroupsScreenState extends State<GroupsScreen>
                           ],
                         ),
                       ),
-                      const Divider(height: 1),
+                      const SizedBox(height: 8),
 
                           // Section content
                           Builder(
@@ -1166,43 +1589,35 @@ class _GroupsScreenState extends State<GroupsScreen>
                                 return _buildGroupSectionTransactions(
                                   items: balanceTransactions,
                                   emptyText: 'No balance splits yet.',
+                                  compactVisual: true,
                                 );
                               }
 
-                              return _buildInlineSettleUpSection(group, transactions);
+                              return _buildInlineSettleUpSection(
+                                group,
+                                transactions,
+                                approvalByPair: approvalByPair,
+                                pendingRequestPairs: pendingRequestPairs,
+                                focusCounterpartyUserId: focusCounterpartyUserId,
+                                onApprovalStatusChanged: (payerUserId, payeeUserId, status) {
+                                  setModalState(() {
+                                    approvalByPair['$payerUserId|$payeeUserId'] = status;
+                                  });
+                                },
+                                onRequestStatusChanged: (senderUserId, receiverUserId, isPending) {
+                                  setModalState(() {
+                                    final key = '$senderUserId|$receiverUserId';
+                                    if (isPending) {
+                                      pendingRequestPairs.add(key);
+                                    } else {
+                                      pendingRequestPairs.remove(key);
+                                    }
+                                  });
+                                },
+                              );
                             },
                           ),
                         ],
-                      ),
-                    ),
-                    Positioned(
-                      left: 0,
-                      right: 0,
-                      bottom: 14,
-                      child: Center(
-                        child: FloatingActionButton(
-                          heroTag: 'group-add-expense-${group.id}',
-                          backgroundColor: const Color(0xFF1A4A8F),
-                          foregroundColor: Colors.white,
-                          onPressed: () => _openAddExpenseDialog(
-                            group,
-                            onPreviewGenerated: (computedTransactions) {
-                              final existing = transactions;
-                              final merged = <_GroupTransaction>[
-                                ...computedTransactions,
-                                ...existing,
-                              ];
-
-                              setState(() {
-                                _groupPreviewTransactions[group.id] = merged;
-                              });
-                              setModalState(() {
-                                transactions = List<_GroupTransaction>.from(merged);
-                              });
-                            },
-                          ),
-                          child: const Icon(Icons.add),
-                        ),
                       ),
                     ),
                       ],
@@ -1279,7 +1694,7 @@ class _GroupsScreenState extends State<GroupsScreen>
                             ],
                           ),
                         ),
-                        const Divider(height: 1),
+                        const SizedBox(height: 8),
                         Expanded(
                           child: Padding(
                             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
@@ -1294,10 +1709,10 @@ class _GroupsScreenState extends State<GroupsScreen>
                                 final amount = member.balance.abs();
                                 final amountLabel = _money(amount);
                                 final subtitle = owesMe
-                                    ? 'Owes you'
-                                    : iOwe
-                                        ? 'You owe'
-                                        : 'Settled';
+                                  ? 'To Receive'
+                                  : iOwe
+                                    ? 'To Pay'
+                                    : 'Settled';
 
                                 return Container(
                                   padding: const EdgeInsets.all(14),
@@ -1854,14 +2269,22 @@ class _GroupsScreenState extends State<GroupsScreen>
             builder: (context, setModalState) {
               return Dialog(
                 insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
+                backgroundColor: Colors.white,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(36),
+                ),
                 child: SizedBox(
                   width: maxWidth,
                   height: maxHeight,
-                  child: Padding(
-                    padding: const EdgeInsets.all(16),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(36),
+                    child: Material(
+                      color: Colors.white,
+                      child: Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
                         Row(
                           children: [
                             Expanded(
@@ -1966,7 +2389,7 @@ class _GroupsScreenState extends State<GroupsScreen>
                                 const SizedBox(height: 14),
                                 if (splitMode == 'equally') ...[
                                   Text(
-                                    'Participants',
+                                    'Participants:',
                                     style: Theme.of(context).textTheme.titleSmall?.copyWith(
                                           fontWeight: FontWeight.w700,
                                         ),
@@ -2060,7 +2483,9 @@ class _GroupsScreenState extends State<GroupsScreen>
                             ),
                           ],
                         ),
-                      ],
+                          ],
+                        ),
+                      ),
                     ),
                   ),
                 ),
@@ -2153,6 +2578,7 @@ class _GroupsScreenState extends State<GroupsScreen>
   Widget _buildGroupSectionTransactions({
     required List<_GroupTransaction> items,
     required String emptyText,
+    bool compactVisual = false,
   }) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
@@ -2162,7 +2588,7 @@ class _GroupsScreenState extends State<GroupsScreen>
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
                 color: const Color(0xFFF4F8FC),
-                borderRadius: BorderRadius.circular(12),
+                borderRadius: BorderRadius.circular(24),
               ),
               child: Text(
                 emptyText,
@@ -2180,6 +2606,7 @@ class _GroupsScreenState extends State<GroupsScreen>
                 final transaction = items[index];
                 return _TransactionRow(
                   transaction: transaction,
+                  compactVisual: compactVisual,
                   onTap: transaction.expenseDetails == null
                       ? null
                       : () => _openExpenseTransactionDetailsDialog(
@@ -2194,6 +2621,19 @@ class _GroupsScreenState extends State<GroupsScreen>
   Widget _buildInlineSettleUpSection(
     GroupSummary group,
     List<_GroupTransaction> transactions,
+    {
+      required Map<String, _PaymentApprovalStatus> approvalByPair,
+      required Set<String> pendingRequestPairs,
+      String? focusCounterpartyUserId,
+      required void Function(
+        String payerUserId,
+        String payeeUserId,
+        _PaymentApprovalStatus status,
+      )
+      onApprovalStatusChanged,
+      required void Function(String senderUserId, String receiverUserId, bool isPending)
+      onRequestStatusChanged,
+    }
   ) {
     final currentUserId = _currentUser?.id;
     if (currentUserId == null) {
@@ -2204,6 +2644,17 @@ class _GroupsScreenState extends State<GroupsScreen>
       transactions: transactions,
       currentUserId: currentUserId,
     );
+    final orderedSummaries = List<_SettleUpSummary>.from(summaries);
+    if (focusCounterpartyUserId != null && focusCounterpartyUserId.isNotEmpty) {
+      orderedSummaries.sort((a, b) {
+        final aFocused = a.counterpartyUserId == focusCounterpartyUserId;
+        final bFocused = b.counterpartyUserId == focusCounterpartyUserId;
+        if (aFocused == bFocused) {
+          return 0;
+        }
+        return aFocused ? -1 : 1;
+      });
+    }
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
@@ -2224,13 +2675,13 @@ class _GroupsScreenState extends State<GroupsScreen>
                 ),
           ),
           const SizedBox(height: 10),
-          if (summaries.isEmpty)
+          if (orderedSummaries.isEmpty)
             Container(
               width: double.infinity,
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
                 color: const Color(0xFFF4F8FC),
-                borderRadius: BorderRadius.circular(12),
+                borderRadius: BorderRadius.circular(24),
               ),
               child: Text(
                 'No pending settlements yet.',
@@ -2243,29 +2694,41 @@ class _GroupsScreenState extends State<GroupsScreen>
             ListView.separated(
               shrinkWrap: true,
               physics: const NeverScrollableScrollPhysics(),
-              itemCount: summaries.length,
+              itemCount: orderedSummaries.length,
               separatorBuilder: (context, index) => const SizedBox(height: 10),
               itemBuilder: (context, index) {
-                final summary = summaries[index];
+                final summary = orderedSummaries[index];
                 final iOwe = summary.netCents > 0;
                 final owesMe = summary.netCents < 0;
                 final amount = (summary.netCents.abs()) / 100;
-              final subtitle = owesMe
-                  ? 'Owes you'
+                final payerUserId = iOwe ? currentUserId : summary.counterpartyUserId;
+                final payeeUserId = iOwe ? summary.counterpartyUserId : currentUserId;
+                final approvalKey = '$payerUserId|$payeeUserId';
+                final approvalStatus = approvalByPair[approvalKey];
+                final requestKey = '$currentUserId|${summary.counterpartyUserId}';
+                final isRequestPending = pendingRequestPairs.contains(requestKey);
+                final isPaymentDone = approvalStatus == _PaymentApprovalStatus.confirmed;
+                final isPendingApproval = approvalStatus == _PaymentApprovalStatus.pending;
+                final isApprovalDenied = approvalStatus == _PaymentApprovalStatus.denied;
+                final subtitle = owesMe
+                  ? 'To Receive'
                   : iOwe
-                      ? 'You owe'
-                      : 'Settled';
+                    ? 'To Pay'
+                    : 'Settled';
 
               return Container(
                 padding: const EdgeInsets.all(14),
                 decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(18),
+                  color: Colors.white.withValues(alpha: 0.78),
+                  borderRadius: BorderRadius.circular(24),
+                  border: summary.counterpartyUserId == focusCounterpartyUserId
+                      ? Border.all(color: const Color(0xFF1A4A8F), width: 1.4)
+                      : null,
                   boxShadow: [
                     BoxShadow(
-                      color: Colors.black.withAlpha(10),
-                      blurRadius: 10,
-                      offset: const Offset(0, 4),
+                      color: const Color(0xFF1A4A8F).withValues(alpha: 0.12),
+                      blurRadius: 18,
+                      offset: const Offset(0, 8),
                     ),
                   ],
                 ),
@@ -2307,26 +2770,65 @@ class _GroupsScreenState extends State<GroupsScreen>
                                       color: const Color(0xFF5A6E82),
                                     ),
                               ),
+                              if (isPendingApproval) ...[
+                                const SizedBox(height: 3),
+                                Text(
+                                  iOwe ? 'Pending approval' : 'Pending your approval',
+                                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                        color: const Color(0xFFAF7A00),
+                                        fontWeight: FontWeight.w700,
+                                      ),
+                                ),
+                              ] else if (isApprovalDenied) ...[
+                                const SizedBox(height: 3),
+                                Text(
+                                  'Approval denied',
+                                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                        color: const Color(0xFFB33A2E),
+                                        fontWeight: FontWeight.w700,
+                                      ),
+                                ),
+                              ] else if (isPaymentDone) ...[
+                                const SizedBox(height: 3),
+                                Text(
+                                  'Payment done',
+                                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                        color: const Color(0xFF1B7D3A),
+                                        fontWeight: FontWeight.w700,
+                                      ),
+                                ),
+                              ],
                             ],
                           ),
                         ),
-                        Text(
-                          _money(amount),
-                          style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                                fontWeight: FontWeight.w900,
-                                color: owesMe
-                                    ? const Color(0xFF1B7D3A)
-                                    : iOwe
-                                        ? const Color(0xFFB33A2E)
-                                        : const Color(0xFF5C6470),
+                        SizedBox(
+                          width: 108,
+                          child: Align(
+                            alignment: Alignment.centerRight,
+                            child: FittedBox(
+                              fit: BoxFit.scaleDown,
+                              alignment: Alignment.centerRight,
+                              child: Text(
+                                _money(amount),
+                                maxLines: 1,
+                                style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                                      fontWeight: FontWeight.w900,
+                                      color: owesMe
+                                          ? const Color(0xFF1B7D3A)
+                                          : iOwe
+                                              ? const Color(0xFFB33A2E)
+                                              : const Color(0xFF5C6470),
+                                    ),
                               ),
+                            ),
+                          ),
                         ),
                       ],
                     ),
                     const SizedBox(height: 12),
                     Row(
                       children: [
-                        if (iOwe) ...[
+                        if (iOwe && !isPaymentDone && !isPendingApproval) ...[
                           Expanded(
                             child: FilledButton(
                               onPressed: () async {
@@ -2352,6 +2854,21 @@ class _GroupsScreenState extends State<GroupsScreen>
                                   return;
                                 }
 
+                                if (launched) {
+                                  await _sendPaymentConfirmationNotification(
+                                    groupId: group.id,
+                                    receiverUserId: summary.counterpartyUserId,
+                                    receiverName: summary.counterpartyName,
+                                    amount: amount,
+                                    method: 'upi',
+                                  );
+                                  onApprovalStatusChanged(
+                                    currentUserId,
+                                    summary.counterpartyUserId,
+                                    _PaymentApprovalStatus.pending,
+                                  );
+                                }
+
                                 _showMessage(
                                   launched
                                       ? 'UPI app opened for ${summary.counterpartyName}.'
@@ -2371,8 +2888,22 @@ class _GroupsScreenState extends State<GroupsScreen>
                           const SizedBox(width: 10),
                           Expanded(
                             child: FilledButton(
-                              onPressed: () {
-                                _showMessage('Marked as paid by cash (stub).');
+                              onPressed: () async {
+                                await _sendPaymentConfirmationNotification(
+                                  groupId: group.id,
+                                  receiverUserId: summary.counterpartyUserId,
+                                  receiverName: summary.counterpartyName,
+                                  amount: amount,
+                                  method: 'cash',
+                                );
+                                onApprovalStatusChanged(
+                                  currentUserId,
+                                  summary.counterpartyUserId,
+                                  _PaymentApprovalStatus.pending,
+                                );
+                                _showMessage(
+                                  'Cash payment marked. Confirmation request sent to ${summary.counterpartyName}.',
+                                );
                               },
                               style: FilledButton.styleFrom(
                                 padding: const EdgeInsets.symmetric(vertical: 12),
@@ -2384,20 +2915,71 @@ class _GroupsScreenState extends State<GroupsScreen>
                               ),
                             ),
                           ),
-                        ] else if (owesMe) ...[
+                        ] else if (iOwe && isPendingApproval) ...[
+                          Expanded(
+                            child: OutlinedButton(
+                              onPressed: null,
+                              child: const Text('Pending approval'),
+                            ),
+                          ),
+                        ] else if (iOwe && isPaymentDone) ...[
+                          Expanded(
+                            child: OutlinedButton(
+                              onPressed: null,
+                              child: const Text('Payment done'),
+                            ),
+                          ),
+                        ] else if (owesMe && !isPaymentDone && !isPendingApproval) ...[
                           Expanded(
                             child: FilledButton(
-                              onPressed: () {
-                                _showMessage('Request sent (stub).');
-                              },
+                              onPressed: isRequestPending
+                                  ? null
+                                  : () async {
+                                      final sent = await _sendPaymentRequestNotification(
+                                        groupId: group.id,
+                                        receiverUserId: summary.counterpartyUserId,
+                                        receiverName: summary.counterpartyName,
+                                        amount: amount,
+                                      );
+
+                                      if (sent) {
+                                        onRequestStatusChanged(
+                                          currentUserId,
+                                          summary.counterpartyUserId,
+                                          true,
+                                        );
+                                        _showMessage(
+                                          'Payment request sent to ${summary.counterpartyName}.',
+                                        );
+                                      } else {
+                                        _showMessage('Could not send request right now.');
+                                      }
+                                    },
                               style: FilledButton.styleFrom(
                                 padding: const EdgeInsets.symmetric(vertical: 12),
                                 backgroundColor: const Color(0xFF1A4A8F),
                               ),
-                              child: const Text(
-                                'Request',
-                                style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700),
+                              child: Text(
+                                isRequestPending ? 'Requested' : 'Request',
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.w700,
+                                ),
                               ),
+                            ),
+                          ),
+                        ] else if (owesMe && isPendingApproval) ...[
+                          Expanded(
+                            child: OutlinedButton(
+                              onPressed: null,
+                              child: const Text('Awaiting your action'),
+                            ),
+                          ),
+                        ] else if (owesMe && isPaymentDone) ...[
+                          Expanded(
+                            child: OutlinedButton(
+                              onPressed: null,
+                              child: const Text('Payment done'),
                             ),
                           ),
                         ] else ...[
@@ -2424,7 +3006,10 @@ class _GroupsScreenState extends State<GroupsScreen>
     required List<_GroupTransaction> transactions,
     required String currentUserId,
   }) {
-    final details = transactions
+    final settlementTransactions = transactions
+        .where((tx) => tx.settlementDetails != null)
+        .toList();
+    final details = settlementTransactions
         .map((tx) => tx.settlementDetails)
         .whereType<_SettlementTransactionDetails>()
         .toList();
@@ -2436,6 +3021,24 @@ class _GroupsScreenState extends State<GroupsScreen>
       }
       if (detail.creditorUserId.isNotEmpty) {
         nameByUserId[detail.creditorUserId] = detail.creditorName;
+      }
+    }
+
+    final latestActivityByUserId = <String, DateTime>{};
+    for (final tx in settlementTransactions) {
+      final detail = tx.settlementDetails;
+      if (detail == null) {
+        continue;
+      }
+
+      final debtorLatest = latestActivityByUserId[detail.debtorUserId];
+      if (debtorLatest == null || tx.sortKey.isAfter(debtorLatest)) {
+        latestActivityByUserId[detail.debtorUserId] = tx.sortKey;
+      }
+
+      final creditorLatest = latestActivityByUserId[detail.creditorUserId];
+      if (creditorLatest == null || tx.sortKey.isAfter(creditorLatest)) {
+        latestActivityByUserId[detail.creditorUserId] = tx.sortKey;
       }
     }
 
@@ -2466,6 +3069,8 @@ class _GroupsScreenState extends State<GroupsScreen>
 
       final fromName = nameByUserId[transfer.payerUserId] ?? 'Member';
       final toName = nameByUserId[transfer.payeeUserId] ?? 'Member';
+      final activityAt =
+          latestActivityByUserId[counterpartyUserId] ?? DateTime.fromMillisecondsSinceEpoch(0);
 
       final summary = map.putIfAbsent(
         counterpartyUserId,
@@ -2474,14 +3079,20 @@ class _GroupsScreenState extends State<GroupsScreen>
           counterpartyName: counterpartyName,
           netCents: 0,
           ledgerLines: <_CounterpartyLedgerLine>[],
+          latestActivityAt: activityAt,
         ),
       );
+
+      if (activityAt.isAfter(summary.latestActivityAt)) {
+        summary.latestActivityAt = activityAt;
+      }
 
       summary.ledgerLines.add(
         _CounterpartyLedgerLine(
           fromName: fromName,
           toName: toName,
           amountCents: transfer.amountCents,
+          occurredAt: activityAt,
         ),
       );
 
@@ -2493,7 +3104,13 @@ class _GroupsScreenState extends State<GroupsScreen>
     }
 
     final summaries = map.values.where((item) => item.netCents != 0).toList();
-    summaries.sort((a, b) => b.netCents.abs().compareTo(a.netCents.abs()));
+    summaries.sort((a, b) {
+      final byLatest = b.latestActivityAt.compareTo(a.latestActivityAt);
+      if (byLatest != 0) {
+        return byLatest;
+      }
+      return b.netCents.abs().compareTo(a.netCents.abs());
+    });
     return summaries;
   }
 
@@ -2501,6 +3118,9 @@ class _GroupsScreenState extends State<GroupsScreen>
     await showDialog<void>(
       context: context,
       builder: (context) {
+        final sortedLedgerLines = List<_CounterpartyLedgerLine>.from(summary.ledgerLines)
+          ..sort((a, b) => b.occurredAt.compareTo(a.occurredAt));
+
         return AlertDialog(
           title: Text('Transactions with ${summary.counterpartyName}'),
           content: SizedBox(
@@ -2509,7 +3129,7 @@ class _GroupsScreenState extends State<GroupsScreen>
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  ...summary.ledgerLines.map(
+                  ...sortedLedgerLines.map(
                     (line) => Padding(
                       padding: const EdgeInsets.only(bottom: 8),
                       child: Text(
@@ -2549,6 +3169,7 @@ class _GroupsScreenState extends State<GroupsScreen>
     required String? currentUserId,
   }) {
     int toCents(double value) => (value * 100).round();
+    final now = DateTime.now();
     final selected = members.where((m) => includeMap[m.userId] ?? false).toList();
     if (selected.isEmpty) {
       return <_GroupTransaction>[];
@@ -2620,7 +3241,8 @@ class _GroupsScreenState extends State<GroupsScreen>
 
       results.add(
         _GroupTransaction(
-          date: _formatDate(DateTime.now()).split(',').first,
+          sortKey: now,
+          date: _formatDate(now).split(',').first,
           title: '$debtorName pays $creditorName',
           subtitle: expenseName,
           amount: transfer / 100,
@@ -2648,7 +3270,8 @@ class _GroupsScreenState extends State<GroupsScreen>
     }
 
     final expenseRow = _GroupTransaction(
-      date: _formatDate(DateTime.now()).split(',').first,
+      sortKey: now,
+      date: _formatDate(now).split(',').first,
       title: expenseName,
       subtitle: 'Expense added',
       amount: totalCents / 100,
@@ -3481,8 +4104,8 @@ class _GroupsScreenState extends State<GroupsScreen>
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
             colors: [
-              Color(0xFFE9F4FF),
-              Color(0xFFF1F8FF),
+              Color(0xFFEAF5FA),
+              Color(0xFFD1E6F4),
             ],
           ),
         ),
@@ -3512,8 +4135,8 @@ class _GroupsScreenState extends State<GroupsScreen>
           begin: Alignment.topCenter,
           end: Alignment.bottomCenter,
           colors: [
-            Color(0xFFE9F4FF),
-            Color(0xFFF1F8FF),
+            Color(0xFFEAF5FA),
+            Color(0xFFD1E6F4),
           ],
         ),
       ),
@@ -3526,10 +4149,12 @@ class _GroupsScreenState extends State<GroupsScreen>
               children: [
                 Text(
                   'Groups',
-                  style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                        fontSize: 34,
-                        fontWeight: FontWeight.w700,
-                      ),
+                  style: const TextStyle(
+                    fontSize: 25,
+                    fontWeight: FontWeight.w800,
+                    color: Colors.black,
+                    letterSpacing: 0.4,
+                  ),
                 ),
                 const SizedBox(height: 16),
                 if (_groups.isEmpty)
@@ -3619,29 +4244,35 @@ class _GroupBar extends StatelessWidget {
   Widget build(BuildContext context) {
     final totalExpenses = _safeDouble(() => group.totalExpenses);
 
-    final money = _GroupsScreenState._money(group.balance);
-    final bool isOwed = group.balance > 0;
-    final bool isOwe = group.balance < 0;
+    final toPay = _safeDouble(() => group.toPayAmount);
+    final toReceive = _safeDouble(() => group.toReceiveAmount);
+    final bool isOwe = toPay > 0;
+    final bool isOwed = toReceive > 0;
+    final money = isOwe
+      ? _GroupsScreenState._money(-toPay)
+      : isOwed
+        ? _GroupsScreenState._money(toReceive)
+        : _GroupsScreenState._money(0);
     final Color amountColor = isOwe
         ? const Color(0xFFB33A2E)
         : isOwed
             ? const Color(0xFF1B7D3A)
             : const Color(0xFF5C6470);
     final String caption = isOwe
-        ? 'You owe'
-        : isOwed
-            ? 'You are owed'
-            : 'Settled up';
+      ? 'To Pay'
+      : isOwed
+        ? 'To Receive'
+        : 'Settled up';
 
     return Material(
-      color: Colors.white,
-      borderRadius: BorderRadius.circular(14),
+      color: Colors.white.withValues(alpha: 0.78),
+      borderRadius: BorderRadius.circular(36),
       child: InkWell(
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(36),
         onTap: onTap,
         onLongPress: onLongPress,
         child: Padding(
-          padding: const EdgeInsets.all(14),
+          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -3673,7 +4304,15 @@ class _GroupBar extends StatelessWidget {
                     ),
                     const SizedBox(height: 6),
                     Text(
-                      '${group.memberCount} members  •  Total spending: ${_GroupsScreenState._money(totalExpenses)}',
+                      '${group.memberCount} members',
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                            color: const Color(0xFF3A4450),
+                            fontWeight: FontWeight.w600,
+                          ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      'Total spending: ${_GroupsScreenState._money(totalExpenses)}',
                       style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                             color: const Color(0xFF3A4450),
                             fontWeight: FontWeight.w600,
@@ -3773,13 +4412,13 @@ class _BalanceCard extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(18),
+        color: Colors.white.withValues(alpha: 0.78),
+        borderRadius: BorderRadius.circular(24),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withAlpha(10),
-            blurRadius: 14,
-            offset: const Offset(0, 7),
+            color: const Color(0xFF1A4A8F).withValues(alpha: 0.12),
+            blurRadius: 18,
+            offset: const Offset(0, 8),
           ),
         ],
       ),
@@ -3821,60 +4460,92 @@ class _BalanceCard extends StatelessWidget {
 }
 
 class _TransactionRow extends StatelessWidget {
-  const _TransactionRow({required this.transaction, this.onTap});
+  const _TransactionRow({
+    required this.transaction,
+    this.onTap,
+    this.compactVisual = false,
+  });
 
   final _GroupTransaction transaction;
   final VoidCallback? onTap;
+  final bool compactVisual;
 
   @override
   Widget build(BuildContext context) {
+    final dateParts = transaction.date.trim().split(RegExp(r'\s+'));
+    final topDate = dateParts.isEmpty ? transaction.date : dateParts.first;
+    final bottomDate = dateParts.length > 1 ? dateParts.sublist(1).join(' ') : '';
+    final dateWidth = compactVisual ? 56.0 : 60.0;
+    final iconSquare = compactVisual ? 40.0 : 44.0;
+    final iconSize = compactVisual ? 20.0 : 21.0;
+    final sideGap = compactVisual ? 8.0 : 9.0;
+    final titleSize = compactVisual ? 14.5 : 16.0;
+
     return Material(
       color: Colors.transparent,
       child: InkWell(
-        borderRadius: BorderRadius.circular(18),
+        borderRadius: BorderRadius.circular(24),
         onTap: onTap,
         child: Container(
           margin: const EdgeInsets.only(bottom: 10),
           decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(18),
+            color: Colors.white.withValues(alpha: 0.78),
+            borderRadius: BorderRadius.circular(24),
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withAlpha(10),
-                blurRadius: 10,
-                offset: const Offset(0, 5),
+                color: const Color(0xFF1A4A8F).withValues(alpha: 0.12),
+                blurRadius: 18,
+                offset: const Offset(0, 8),
               ),
             ],
           ),
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
             child: Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
               children: [
-                Expanded(
-                  flex: 2,
+                SizedBox(
+                  width: dateWidth,
                   child: Container(
-                    padding: const EdgeInsets.all(10),
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 9),
                     decoration: BoxDecoration(
                       color: const Color(0xFFE9F4FF),
-                      borderRadius: BorderRadius.circular(14),
+                      borderRadius: BorderRadius.circular(18),
                     ),
-                    child: Center(
-                      child: Text(
-                        transaction.date,
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                              color: const Color(0xFF3A4450),
-                              fontWeight: FontWeight.w700,
-                            ),
-                        textAlign: TextAlign.center,
-                      ),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          topDate,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                                color: const Color(0xFF3A4450),
+                                fontWeight: FontWeight.w800,
+                              ),
+                          textAlign: TextAlign.center,
+                        ),
+                        if (bottomDate.isNotEmpty)
+                          Text(
+                            bottomDate,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                                  color: const Color(0xFF3A4450),
+                                  fontWeight: FontWeight.w800,
+                                ),
+                            textAlign: TextAlign.center,
+                          ),
+                      ],
                     ),
                   ),
                 ),
-                const SizedBox(width: 10),
-                Expanded(
-                  flex: 1,
+                SizedBox(width: sideGap),
+                SizedBox(
+                  width: iconSquare,
+                  height: iconSquare,
                   child: Container(
-                    padding: const EdgeInsets.all(10),
+                    alignment: Alignment.center,
                     decoration: BoxDecoration(
                       color: const Color(0xFFF5F8FC),
                       borderRadius: BorderRadius.circular(14),
@@ -3882,26 +4553,30 @@ class _TransactionRow extends StatelessWidget {
                     child: Icon(
                       transaction.icon,
                       color: const Color(0xFF1D6CAB),
-                      size: 22,
+                      size: iconSize,
                     ),
                   ),
                 ),
-                const SizedBox(width: 10),
+                SizedBox(width: sideGap),
                 Expanded(
-                  flex: 5,
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
                       Text(
                         transaction.title,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
                         style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                          fontSize: titleSize,
                               fontWeight: FontWeight.w700,
                             ),
                       ),
                       const SizedBox(height: 4),
                       Text(
                         transaction.subtitle,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
                         style: Theme.of(context).textTheme.bodySmall?.copyWith(
                               color: const Color(0xFF5A6E82),
                             ),
@@ -3910,16 +4585,25 @@ class _TransactionRow extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(width: 10),
-                Expanded(
-                  flex: 2,
-                  child: Text(
-                    '${transaction.isCredit ? '+' : '-'}₹${transaction.amount.toStringAsFixed(2)}',
-                    textAlign: TextAlign.right,
-                    style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                          fontWeight: FontWeight.w700,
-                          color:
-                              transaction.isCredit ? const Color(0xFF1B7D3A) : const Color(0xFFB33A2E),
-                        ),
+                SizedBox(
+                  width: 102,
+                  child: Align(
+                    alignment: Alignment.centerRight,
+                    child: FittedBox(
+                      fit: BoxFit.scaleDown,
+                      alignment: Alignment.centerRight,
+                      child: Text(
+                        '${transaction.isCredit ? '+' : '-'}₹${transaction.amount.toStringAsFixed(2)}',
+                        maxLines: 1,
+                        textAlign: TextAlign.right,
+                        style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                              fontWeight: FontWeight.w700,
+                              color: transaction.isCredit
+                                  ? const Color(0xFF1B7D3A)
+                                  : const Color(0xFFB33A2E),
+                            ),
+                      ),
+                    ),
                   ),
                 ),
               ],
@@ -4249,7 +4933,9 @@ class _ExpenseListCard extends StatelessWidget {
                                 ),
                           ),
                           const SizedBox(height: 3),
-                          Text('Amount: ${_GroupsScreenState._money(expense.amount)}'),
+                          Text(
+                            'Amount: ${expense.amount < 0 ? '-' : ''}₹${expense.amount.abs().toStringAsFixed(2)}',
+                          ),
                           Text('Paid by: ${expense.paidBy}'),
                           Text(
                             'Date: ${expense.date.year}-${expense.date.month.toString().padLeft(2, '0')}-${expense.date.day.toString().padLeft(2, '0')}',
@@ -4417,6 +5103,8 @@ class GroupSummary {
     required this.balance,
     required this.memberCount,
     this.settlementStatus,
+    this.toPayAmount = 0,
+    this.toReceiveAmount = 0,
   });
 
   final String id;
@@ -4428,6 +5116,8 @@ class GroupSummary {
   final double totalExpenses;
   final double totalOwed;
   final double balance;
+  final double toPayAmount;
+  final double toReceiveAmount;
   final int memberCount;
   final String? settlementStatus;
 }
@@ -4476,6 +5166,7 @@ class GroupExpense {
     required this.amount,
     required this.paidBy,
     required this.date,
+    required this.createdAt,
     required this.owesWhom,
     this.billImageUrl,
   });
@@ -4484,6 +5175,7 @@ class GroupExpense {
   final double amount;
   final String paidBy;
   final DateTime date;
+  final DateTime createdAt;
   final String owesWhom;
   final String? billImageUrl;
 }
