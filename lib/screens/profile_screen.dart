@@ -292,83 +292,192 @@ class _ProfileScreenState extends State<ProfileScreen> {
     final nameController = TextEditingController(text: _username);
     final emailController = TextEditingController(text: _email);
     final upiController = TextEditingController(text: _upiId);
+    var isSaving = false;
 
-    showDialog(
+    showDialog<void>(
       context: context,
-      builder: (context) => Dialog(
-        backgroundColor: cardColor,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(36)),
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Edit Profile',
-                  style: TextStyle(
-                    fontSize: 24,
-                    fontWeight: FontWeight.w600,
-                    color: textDark,
-                    letterSpacing: -0.5,
-                  ),
-                ),
-                const SizedBox(height: 24),
-                _buildModernTextField('Name', nameController),
-                const SizedBox(height: 16),
-                _buildModernTextField('Email', emailController),
-                const SizedBox(height: 16),
-                _buildModernTextField('UPI ID', upiController),
-                const SizedBox(height: 32),
-                Row(
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (dialogContext, setModalState) {
+          return Dialog(
+            backgroundColor: cardColor,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(36)),
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Expanded(
-                      child: TextButton(
-                        onPressed: () => Navigator.of(context).pop(),
-                        style: TextButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(vertical: 16),
-                          foregroundColor: textSoft,
-                        ),
-                        child: const Text(
-                          'Cancel',
-                          style: TextStyle(fontSize: 16),
-                        ),
+                    Text(
+                      'Edit Profile',
+                      style: TextStyle(
+                        fontSize: 24,
+                        fontWeight: FontWeight.w600,
+                        color: textDark,
+                        letterSpacing: -0.5,
                       ),
                     ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: ElevatedButton(
-                        onPressed: () async {
-                          // Save logic remains the same
-                          Navigator.of(context).pop();
-                        },
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: primaryDark,
-                          foregroundColor: Colors.white,
-                          padding: const EdgeInsets.symmetric(vertical: 16),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(20),
+                    const SizedBox(height: 24),
+                    _buildModernTextField('Username', nameController),
+                    const SizedBox(height: 16),
+                    _buildModernTextField(
+                      'Email',
+                      emailController,
+                      keyboardType: TextInputType.emailAddress,
+                    ),
+                    const SizedBox(height: 16),
+                    _buildModernTextField('UPI ID', upiController),
+                    const SizedBox(height: 32),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: TextButton(
+                            onPressed: isSaving ? null : () => Navigator.of(dialogContext).pop(),
+                            style: TextButton.styleFrom(
+                              padding: const EdgeInsets.symmetric(vertical: 16),
+                              foregroundColor: textSoft,
+                            ),
+                            child: const Text(
+                              'Cancel',
+                              style: TextStyle(fontSize: 16),
+                            ),
                           ),
-                          elevation: 0,
                         ),
-                        child: const Text(
-                          'Save',
-                          style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w600,
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: ElevatedButton(
+                            onPressed: isSaving
+                                ? null
+                                : () async {
+                                    final username = nameController.text.trim();
+                                    final email = emailController.text.trim().toLowerCase();
+                                    final upiId = upiController.text.trim();
+
+                                    if (username.isEmpty) {
+                                      _showMessage('Username cannot be empty.');
+                                      return;
+                                    }
+                                    if (!email.contains('@')) {
+                                      _showMessage('Enter a valid email address.');
+                                      return;
+                                    }
+                                    if (upiId.isEmpty) {
+                                      _showMessage('UPI ID cannot be empty.');
+                                      return;
+                                    }
+
+                                    setModalState(() => isSaving = true);
+                                    final message = await _saveProfileChanges(
+                                      username: username,
+                                      email: email,
+                                      upiId: upiId,
+                                    );
+                                    if (!mounted) {
+                                      return;
+                                    }
+
+                                    if (dialogContext.mounted) {
+                                      Navigator.of(dialogContext).pop();
+                                    }
+                                    _showMessage(message);
+                                  },
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: primaryDark,
+                              foregroundColor: Colors.white,
+                              padding: const EdgeInsets.symmetric(vertical: 16),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(20),
+                              ),
+                              elevation: 0,
+                            ),
+                            child: isSaving
+                                ? const SizedBox(
+                                    height: 18,
+                                    width: 18,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                      color: Colors.white,
+                                    ),
+                                  )
+                                : const Text(
+                                    'Save',
+                                    style: TextStyle(
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
                           ),
                         ),
-                      ),
+                      ],
                     ),
                   ],
                 ),
-              ],
+              ),
             ),
-          ),
-        ),
+          );
+        },
       ),
     );
+  }
+
+  Future<String> _saveProfileChanges({
+    required String username,
+    required String email,
+    required String upiId,
+  }) async {
+    final user = _client.auth.currentUser;
+    if (user == null) {
+      return 'Please login again and try updating profile.';
+    }
+
+    final previousMetadata = user.userMetadata ?? <String, dynamic>{};
+    final nextMetadata = <String, dynamic>{
+      ...previousMetadata,
+      'full_name': username,
+      'name': username,
+      'display_name': username,
+      'upi_id': upiId,
+    };
+
+    try {
+      await _client.auth.updateUser(
+        UserAttributes(
+          email: email == (user.email ?? '').toLowerCase() ? null : email,
+          data: nextMetadata,
+        ),
+      );
+
+      // Keep group member records in sync so names/UPI update across group screens.
+      await _client
+          .from('group_members')
+          .update({'display_name': username, 'upi_id': upiId})
+          .eq('user_id', user.id);
+
+      if (mounted) {
+        setState(() {});
+      }
+
+      if (email != (user.email ?? '').toLowerCase()) {
+        return 'Profile updated. Check your new email inbox to confirm email change.';
+      }
+      return 'Profile updated successfully.';
+    } on AuthException catch (error) {
+      return 'Could not update profile (${error.message}).';
+    } on PostgrestException catch (error) {
+      return 'Profile metadata updated, but group sync failed (${error.message}).';
+    } catch (_) {
+      return 'Could not update profile right now. Please try again.';
+    }
+  }
+
+  void _showMessage(String message) {
+    if (!mounted) {
+      return;
+    }
+
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(message)));
   }
 
   void _showChangePasswordDialog(BuildContext context) {
@@ -471,10 +580,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
     String label,
     TextEditingController controller, {
     bool obscure = false,
+    TextInputType? keyboardType,
   }) {
     return TextField(
       controller: controller,
       obscureText: obscure,
+      keyboardType: keyboardType,
       style: TextStyle(color: textDark, fontWeight: FontWeight.w500),
       decoration: InputDecoration(
         labelText: label,

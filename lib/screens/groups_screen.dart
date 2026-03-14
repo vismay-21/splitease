@@ -11,6 +11,8 @@ final _fakeGroups = [
     name: 'Trip to Goa',
     icon: 'airplanemode_active',
     createdByUserId: 'Ayaan K.',
+    createdByName: 'Ayaan K.',
+    createdAt: DateTime(2026, 3, 1),
     totalExpenses: 1890.50,
     totalOwed: 560.25,
     balance: -250.50,
@@ -22,6 +24,8 @@ final _fakeGroups = [
     name: 'Room Rent',
     icon: 'home',
     createdByUserId: 'Sneh',
+    createdByName: 'Sneh',
+    createdAt: DateTime(2026, 3, 2),
     totalExpenses: 3450.00,
     totalOwed: 1000.00,
     balance: 280.75,
@@ -222,19 +226,60 @@ class _GroupsScreenState extends State<GroupsScreen>
       _loadError = null;
     });
 
-    // Simulate a short loading delay.
-    await Future.delayed(const Duration(milliseconds: 250));
+    try {
+      final user = _currentUser;
+      if (user == null) {
+        if (!mounted) {
+          return;
+        }
 
-    if (!mounted) return;
+        setState(() {
+          _groups = <GroupSummary>[];
+          _pendingInvitations = <GroupInvitation>[];
+          _isLoading = false;
+          _hasLoadedOnce = true;
+          _cachedGroups = List<GroupSummary>.from(_groups);
+          _cachedInvitations = List<GroupInvitation>.from(_pendingInvitations);
+        });
+        return;
+      }
 
-    setState(() {
-      _groups = List<GroupSummary>.from(_fakeGroups);
-      _pendingInvitations = [];
-      _isLoading = false;
-      _hasLoadedOnce = true;
-      _cachedGroups = List<GroupSummary>.from(_groups);
-      _cachedInvitations = List<GroupInvitation>.from(_pendingInvitations);
-    });
+      final groups = await _fetchGroupsForUser(user.id);
+      final invitations = await _fetchPendingInvitations(user.email);
+
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _groups = groups;
+        _pendingInvitations = invitations;
+        _isLoading = false;
+        _hasLoadedOnce = true;
+        _cachedGroups = List<GroupSummary>.from(_groups);
+        _cachedInvitations = List<GroupInvitation>.from(_pendingInvitations);
+      });
+    } on PostgrestException catch (error) {
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _isLoading = false;
+        _hasLoadedOnce = true;
+        _loadError = 'Could not load groups (${error.message}).';
+      });
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _isLoading = false;
+        _hasLoadedOnce = true;
+        _loadError = 'Unable to load groups right now.';
+      });
+    }
   }
 
   Future<List<GroupSummary>> _fetchGroupsForUser(String userId) async {
@@ -254,10 +299,13 @@ class _GroupsScreenState extends State<GroupsScreen>
 
     final groupRows = await _client
         .from('groups')
-      .select('id,name,icon,created_by,total_expenses,total_owed,balance,settlement_status')
+        .select(
+          'id,name,icon,created_by,created_at,total_expenses,total_owed,balance,settlement_status',
+        )
         .inFilter('id', groupIds) as List<dynamic>;
 
     final memberCounts = await _fetchMemberCounts(groupIds);
+    final creatorNames = await _fetchCreatorNames(groupIds);
 
     final summaries = <GroupSummary>[];
     for (final row in groupRows) {
@@ -272,6 +320,9 @@ class _GroupsScreenState extends State<GroupsScreen>
           name: row['name']?.toString() ?? 'Unnamed Group',
           icon: row['icon']?.toString() ?? 'group',
           createdByUserId: row['created_by']?.toString() ?? '',
+          createdByName: _creatorNameFor(row, creatorNames),
+          createdAt: DateTime.tryParse(row['created_at']?.toString() ?? '')?.toLocal() ??
+              DateTime.now(),
           totalExpenses: _asDouble(row['total_expenses']),
           totalOwed: _asDouble(row['total_owed']),
           balance: _asDouble(row['balance']),
@@ -283,6 +334,94 @@ class _GroupsScreenState extends State<GroupsScreen>
 
     summaries.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
     return summaries;
+  }
+
+  Future<Map<String, String>> _fetchCreatorNames(List<String> groupIds) async {
+    final rows = await _client
+        .from('group_members')
+        .select('group_id,user_id,display_name')
+        .inFilter('group_id', groupIds) as List<dynamic>;
+
+    final namesByGroupAndUser = <String, String>{};
+    for (final row in rows) {
+      final groupId = row['group_id']?.toString() ?? '';
+      final userId = row['user_id']?.toString() ?? '';
+      final displayName = row['display_name']?.toString().trim() ?? '';
+      if (groupId.isEmpty || userId.isEmpty || displayName.isEmpty) {
+        continue;
+      }
+      namesByGroupAndUser['$groupId|$userId'] = displayName;
+    }
+
+    return namesByGroupAndUser;
+  }
+
+  String _creatorNameFor(Map<String, dynamic> row, Map<String, String> creatorNames) {
+    final groupId = row['id']?.toString() ?? '';
+    final creatorId = row['created_by']?.toString() ?? '';
+    final currentUser = _currentUser;
+
+    if (currentUser != null && creatorId == currentUser.id) {
+      return _currentUserPreferredName(currentUser);
+    }
+
+    final name = creatorNames['$groupId|$creatorId'];
+    if (name != null && name.isNotEmpty) {
+      return _friendlyNameFromDisplayValue(name);
+    }
+
+    if (creatorId.isEmpty) {
+      return 'Unknown';
+    }
+
+    return creatorId.length <= 10 ? creatorId : creatorId.substring(0, 10);
+  }
+
+  String _currentUserPreferredName(User user) {
+    final metadata = user.userMetadata ?? <String, dynamic>{};
+    final candidates = [
+      metadata['full_name']?.toString(),
+      metadata['name']?.toString(),
+      metadata['display_name']?.toString(),
+      metadata['preferred_username']?.toString(),
+      metadata['user_name']?.toString(),
+    ];
+
+    for (final candidate in candidates) {
+      final normalized = _friendlyNameFromDisplayValue(candidate);
+      if (normalized.isNotEmpty) {
+        return normalized;
+      }
+    }
+
+    final emailName = _friendlyNameFromDisplayValue(user.email);
+    return emailName.isEmpty ? 'You' : emailName;
+  }
+
+  String _friendlyNameFromDisplayValue(String? value) {
+    final raw = value?.trim() ?? '';
+    if (raw.isEmpty) {
+      return '';
+    }
+
+    // If display value is an email, show only the username part.
+    final username = raw.contains('@') ? raw.split('@').first : raw;
+    if (username.isEmpty) {
+      return '';
+    }
+
+    final cleaned = username.replaceAll(RegExp(r'[._-]+'), ' ').trim();
+    if (cleaned.isEmpty) {
+      return username;
+    }
+
+    final words = cleaned
+        .split(RegExp(r'\s+'))
+        .where((word) => word.isNotEmpty)
+        .map((word) => word[0].toUpperCase() + word.substring(1).toLowerCase())
+        .toList();
+
+    return words.isEmpty ? username : words.join(' ');
   }
 
   Future<Map<String, int>> _fetchMemberCounts(List<String> groupIds) async {
@@ -511,7 +650,7 @@ class _GroupsScreenState extends State<GroupsScreen>
       builder: (context) {
         final maxHeight = MediaQuery.of(context).size.height * 0.82;
         final maxWidth = MediaQuery.of(context).size.width * 0.92;
-        final createdDate = 'Apr 04, 2024';
+        final createdDate = _formatDate(group.createdAt);
 
         return Dialog(
           insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
@@ -563,13 +702,39 @@ class _GroupsScreenState extends State<GroupsScreen>
                                       ),
                                     ),
                                     const SizedBox(width: 12),
-                                    CircleAvatar(
-                                      radius: 28,
-                                      backgroundColor: const Color(0xFFD8ECFA),
-                                      foregroundColor: const Color(0xFF1D6CAB),
-                                      child: Icon(
-                                        _GroupBar._iconFor(group.icon),
-                                        size: 28,
+                                    InkWell(
+                                      borderRadius: BorderRadius.circular(28),
+                                      onTap: () => _openMembersDirectoryPopup(group),
+                                      child: Stack(
+                                        clipBehavior: Clip.none,
+                                        children: [
+                                          CircleAvatar(
+                                            radius: 28,
+                                            backgroundColor: const Color(0xFFD8ECFA),
+                                            foregroundColor: const Color(0xFF1D6CAB),
+                                            child: Icon(
+                                              _GroupBar._iconFor(group.icon),
+                                              size: 28,
+                                            ),
+                                          ),
+                                          Positioned(
+                                            right: -2,
+                                            bottom: -2,
+                                            child: Container(
+                                              padding: const EdgeInsets.all(4),
+                                              decoration: BoxDecoration(
+                                                color: const Color(0xFF1A4A8F),
+                                                borderRadius: BorderRadius.circular(10),
+                                                border: Border.all(color: Colors.white, width: 1.5),
+                                              ),
+                                              child: const Icon(
+                                                Icons.edit,
+                                                size: 12,
+                                                color: Colors.white,
+                                              ),
+                                            ),
+                                          ),
+                                        ],
                                       ),
                                     ),
                                   ],
@@ -580,7 +745,7 @@ class _GroupsScreenState extends State<GroupsScreen>
                                     const Icon(Icons.person, size: 18, color: Color(0xFF5A6E82)),
                                     const SizedBox(width: 6),
                                     Text(
-                                      'Created by ${group.createdByUserId}',
+                                      'Created by ${group.createdByName}',
                                       style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                                             color: const Color(0xFF5A6E82),
                                           ),
@@ -1174,6 +1339,13 @@ class _GroupsScreenState extends State<GroupsScreen>
   Future<void> _openCreateGroupDialog() async {
     final nameController = TextEditingController();
     String selectedIcon = 'group';
+    final groupIcons = <MapEntry<String, String>>[
+      const MapEntry('group', 'Group'),
+      const MapEntry('food', 'Food'),
+      const MapEntry('flight', 'Trip'),
+      const MapEntry('home', 'Home'),
+      const MapEntry('sports', 'Sports'),
+    ];
 
     await showGeneralDialog<void>(
       context: context,
@@ -1185,7 +1357,7 @@ class _GroupsScreenState extends State<GroupsScreen>
         return StatefulBuilder(
           builder: (context, setModalState) {
             return AlertDialog(
-              title: const Text('Create Group'),
+              title: const Text('New Group'),
               content: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
@@ -1196,19 +1368,26 @@ class _GroupsScreenState extends State<GroupsScreen>
                   const SizedBox(height: 12),
                   DropdownButtonFormField<String>(
                     initialValue: selectedIcon,
-                    items: const [
-                      DropdownMenuItem(value: 'group', child: Text('Group')),
-                      DropdownMenuItem(value: 'food', child: Text('Food')),
-                      DropdownMenuItem(value: 'flight', child: Text('Trip')),
-                      DropdownMenuItem(value: 'home', child: Text('Home')),
-                      DropdownMenuItem(value: 'sports', child: Text('Sports')),
-                    ],
+                    items: groupIcons
+                        .map(
+                          (icon) => DropdownMenuItem<String>(
+                            value: icon.key,
+                            child: Row(
+                              children: [
+                                Icon(_GroupBar._iconFor(icon.key), size: 18),
+                                const SizedBox(width: 8),
+                                Text(icon.value),
+                              ],
+                            ),
+                          ),
+                        )
+                        .toList(),
                     onChanged: (value) {
                       if (value != null) {
                         setModalState(() => selectedIcon = value);
                       }
                     },
-                    decoration: const InputDecoration(labelText: 'Icon'),
+                    decoration: const InputDecoration(labelText: 'Group icon'),
                   ),
                 ],
               ),
@@ -1475,6 +1654,418 @@ class _GroupsScreenState extends State<GroupsScreen>
     );
   }
 
+  Future<List<_GroupMemberDirectoryItem>> _fetchGroupMembersDirectory(String groupId) async {
+    final rows = await _client.rpc('get_group_members_with_email', params: {
+      '_group_id': groupId,
+    }) as List<dynamic>;
+
+    return rows
+        .map(
+          (row) => _GroupMemberDirectoryItem(
+            userId: row['user_id']?.toString() ?? '',
+            name: row['display_name']?.toString() ?? 'Member',
+            email: row['email']?.toString() ?? '',
+            role: row['role']?.toString() ?? 'member',
+          ),
+        )
+        .where((member) => member.userId.isNotEmpty)
+        .toList();
+  }
+
+  Future<String?> _askMemberEmail() async {
+    final controller = TextEditingController();
+
+    return showDialog<String>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Add member'),
+          content: TextField(
+            controller: controller,
+            keyboardType: TextInputType.emailAddress,
+            autofocus: true,
+            decoration: const InputDecoration(
+              labelText: 'User email',
+              hintText: 'friend@email.com',
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () {
+                final email = controller.text.trim().toLowerCase();
+                if (!email.contains('@')) {
+                  _showMessage('Enter a valid email address.');
+                  return;
+                }
+                Navigator.of(context).pop(email);
+              },
+              child: const Text('Add'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<bool> _addMemberByEmail(GroupSummary group, String email) async {
+    try {
+      await _client.rpc('add_group_member_by_email', params: {
+        '_group_id': group.id,
+        '_invitee_email': email,
+      });
+      _showMessage('Member added: $email');
+      return true;
+    } on PostgrestException catch (error) {
+      _showMessage('Could not add member (${error.message}).');
+      return false;
+    } catch (_) {
+      _showMessage('Unable to add member right now.');
+      return false;
+    }
+  }
+
+  Future<bool> _removeMemberByUserId(
+    GroupSummary group,
+    _GroupMemberDirectoryItem member,
+  ) async {
+    final user = _currentUser;
+    if (user == null) {
+      return false;
+    }
+
+    if (group.createdByUserId != user.id) {
+      _showMessage('Only the group creator can remove members.');
+      return false;
+    }
+
+    if (member.userId == group.createdByUserId || member.role == 'owner') {
+      _showMessage('Group creator cannot be removed.');
+      return false;
+    }
+
+    try {
+      await _client
+          .from('group_members')
+          .delete()
+          .eq('group_id', group.id)
+          .eq('user_id', member.userId);
+
+      _showMessage('${member.name} removed from group.');
+      return true;
+    } on PostgrestException catch (error) {
+      _showMessage('Could not remove member (${error.message}).');
+      return false;
+    } catch (_) {
+      _showMessage('Unable to remove member right now.');
+      return false;
+    }
+  }
+
+  Future<void> _exitGroup(GroupSummary group) async {
+    final user = _currentUser;
+    if (user == null) {
+      return;
+    }
+
+    if (group.createdByUserId == user.id) {
+      _showMessage('Group creator cannot exit. Delete the group instead.');
+      return;
+    }
+
+    final shouldExit = await showDialog<bool>(
+          context: context,
+          builder: (context) {
+            return AlertDialog(
+              title: const Text('Exit group?'),
+              content: Text('You will leave "${group.name}".'),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(false),
+                  child: const Text('Cancel'),
+                ),
+                FilledButton(
+                  onPressed: () => Navigator.of(context).pop(true),
+                  child: const Text('Exit'),
+                ),
+              ],
+            );
+          },
+        ) ??
+        false;
+
+    if (!shouldExit) {
+      return;
+    }
+
+    try {
+      await _client
+          .from('group_members')
+          .delete()
+          .eq('group_id', group.id)
+          .eq('user_id', user.id);
+
+      if (!mounted) {
+        return;
+      }
+
+      Navigator.of(context).pop();
+      _showMessage('You exited ${group.name}.');
+      await _loadData();
+    } on PostgrestException catch (error) {
+      _showMessage('Could not exit group (${error.message}).');
+    } catch (_) {
+      _showMessage('Unable to exit group right now.');
+    }
+  }
+
+  Future<void> _openMembersDirectoryPopup(GroupSummary group) async {
+    final isCreator = group.createdByUserId == _currentUser?.id;
+    Future<List<_GroupMemberDirectoryItem>> membersFuture =
+        _fetchGroupMembersDirectory(group.id);
+
+    await showDialog<void>(
+      context: context,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setModalState) {
+            return Dialog(
+              insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
+              child: SizedBox(
+                width: 560,
+                height: 560,
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  '${group.name} members',
+                                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                                        fontWeight: FontWeight.w700,
+                                      ),
+                                ),
+                                const SizedBox(height: 4),
+                                Text(
+                                  'Creator: ${group.createdByName}',
+                                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                                        color: const Color(0xFF5A6E82),
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          IconButton(
+                            onPressed: () => Navigator.of(context).pop(),
+                            icon: const Icon(Icons.close),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      Expanded(
+                        child: Stack(
+                          children: [
+                            FutureBuilder<List<_GroupMemberDirectoryItem>>(
+                              future: membersFuture,
+                              builder: (context, snapshot) {
+                                if (snapshot.connectionState == ConnectionState.waiting) {
+                                  return const Center(child: CircularProgressIndicator());
+                                }
+
+                                if (snapshot.hasError) {
+                                  return Center(
+                                    child: Text(
+                                      'Could not load members.',
+                                      style: Theme.of(context).textTheme.bodyMedium,
+                                    ),
+                                  );
+                                }
+
+                                final members = snapshot.data ?? <_GroupMemberDirectoryItem>[];
+                                if (members.isEmpty) {
+                                  return Center(
+                                    child: Text(
+                                      'No members found for this group.',
+                                      style: Theme.of(context).textTheme.bodyMedium,
+                                    ),
+                                  );
+                                }
+
+                                return ListView.separated(
+                                  padding: const EdgeInsets.only(bottom: 80),
+                                  itemCount: members.length,
+                                  separatorBuilder: (_, __) => const SizedBox(height: 8),
+                                  itemBuilder: (context, index) {
+                                    final member = members[index];
+                                    final canRemove = isCreator &&
+                                        member.userId != group.createdByUserId &&
+                                        member.role != 'owner';
+                                    final isGroupCreator = member.userId == group.createdByUserId;
+                                    return ListTile(
+                                      tileColor: const Color(0xFFF3F8FD),
+                                      shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(12),
+                                      ),
+                                      leading: CircleAvatar(
+                                        backgroundColor: const Color(0xFFD8ECFA),
+                                        child: Text(
+                                          member.name.isNotEmpty
+                                              ? member.name[0].toUpperCase()
+                                              : '?',
+                                          style: const TextStyle(color: Color(0xFF1D6CAB)),
+                                        ),
+                                      ),
+                                      title: Text(member.name),
+                                      subtitle: Column(
+                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        children: [
+                                          Text(member.email.isEmpty ? 'No email available' : member.email),
+                                          if (isGroupCreator)
+                                            Container(
+                                              margin: const EdgeInsets.only(top: 4),
+                                              padding: const EdgeInsets.symmetric(
+                                                horizontal: 8,
+                                                vertical: 2,
+                                              ),
+                                              decoration: BoxDecoration(
+                                                color: const Color(0xFFD8ECFA),
+                                                borderRadius: BorderRadius.circular(999),
+                                              ),
+                                              child: const Text(
+                                                'Creator',
+                                                style: TextStyle(
+                                                  fontSize: 11,
+                                                  fontWeight: FontWeight.w700,
+                                                  color: Color(0xFF1D6CAB),
+                                                ),
+                                              ),
+                                            ),
+                                        ],
+                                      ),
+                                      trailing: canRemove
+                                          ? IconButton(
+                                              tooltip: 'Remove member',
+                                              icon: const Icon(
+                                                Icons.delete_outline,
+                                                color: Color(0xFFB33A2E),
+                                              ),
+                                              onPressed: () async {
+                                                final remove = await showDialog<bool>(
+                                                      context: context,
+                                                      builder: (context) {
+                                                        return AlertDialog(
+                                                          title: const Text('Remove member?'),
+                                                          content: Text(
+                                                            'Remove ${member.name} from ${group.name}?',
+                                                          ),
+                                                          actions: [
+                                                            TextButton(
+                                                              onPressed: () => Navigator.of(context).pop(false),
+                                                              child: const Text('Cancel'),
+                                                            ),
+                                                            FilledButton(
+                                                              style: FilledButton.styleFrom(
+                                                                backgroundColor: const Color(0xFFB33A2E),
+                                                              ),
+                                                              onPressed: () => Navigator.of(context).pop(true),
+                                                              child: const Text('Remove'),
+                                                            ),
+                                                          ],
+                                                        );
+                                                      },
+                                                    ) ??
+                                                    false;
+
+                                                if (!remove) {
+                                                  return;
+                                                }
+
+                                                final removed = await _removeMemberByUserId(group, member);
+                                                if (!removed) {
+                                                  return;
+                                                }
+
+                                                if (!mounted) {
+                                                  return;
+                                                }
+
+                                                setModalState(() {
+                                                  membersFuture = _fetchGroupMembersDirectory(group.id);
+                                                });
+                                                await _loadData();
+                                              },
+                                            )
+                                          : null,
+                                    );
+                                  },
+                                );
+                              },
+                            ),
+                            Positioned(
+                              right: 0,
+                              bottom: 0,
+                              child: FloatingActionButton.extended(
+                                onPressed: isCreator
+                                    ? () async {
+                                        final email = await _askMemberEmail();
+                                        if (email == null || email.isEmpty) {
+                                          return;
+                                        }
+
+                                        final added = await _addMemberByEmail(group, email);
+                                        if (!added) {
+                                          return;
+                                        }
+
+                                        if (!mounted) {
+                                          return;
+                                        }
+
+                                        setModalState(() {
+                                          membersFuture = _fetchGroupMembersDirectory(group.id);
+                                        });
+                                        await _loadData();
+                                      }
+                                    : () => _exitGroup(group),
+                                backgroundColor:
+                                    isCreator ? const Color(0xFF1A4A8F) : const Color(0xFFB33A2E),
+                                icon: Icon(
+                                  isCreator ? Icons.person_add_alt_1 : Icons.logout_rounded,
+                                  color: Colors.white,
+                                ),
+                                label: Text(
+                                  isCreator ? 'Add member' : 'Exit Group',
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
   Future<void> _openInviteDialog(GroupSummary group) async {
     _inviteEmailController.clear();
 
@@ -1643,6 +2234,69 @@ class _GroupsScreenState extends State<GroupsScreen>
     }
   }
 
+  Future<void> _onGroupLongPress(GroupSummary group) async {
+    final user = _currentUser;
+    if (user == null) {
+      return;
+    }
+
+    if (group.createdByUserId != user.id) {
+      _showMessage('Only the group creator can delete this group.');
+      return;
+    }
+
+    final shouldDelete = await showDialog<bool>(
+          context: context,
+          builder: (context) {
+            return AlertDialog(
+              title: const Text('Delete group?'),
+              content: Text(
+                'Delete "${group.name}" for all members? This cannot be undone.',
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(false),
+                  child: const Text('Cancel'),
+                ),
+                FilledButton(
+                  style: FilledButton.styleFrom(
+                    backgroundColor: const Color(0xFFB33A2E),
+                  ),
+                  onPressed: () => Navigator.of(context).pop(true),
+                  child: const Text('Delete'),
+                ),
+              ],
+            );
+          },
+        ) ??
+        false;
+
+    if (!shouldDelete) {
+      return;
+    }
+
+    try {
+      await _client.from('groups').delete().eq('id', group.id);
+
+      if (!mounted) {
+        return;
+      }
+
+      _showMessage('Group deleted.');
+      await _loadData();
+    } on PostgrestException catch (error) {
+      if (!mounted) {
+        return;
+      }
+      _showMessage('Could not delete group (${error.message}).');
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+      _showMessage('Unable to delete group right now.');
+    }
+  }
+
   void _showMessage(String message) {
     if (!mounted) {
       return;
@@ -1711,6 +2365,26 @@ class _GroupsScreenState extends State<GroupsScreen>
   static String _money(double value) {
     final sign = value < 0 ? '-' : '';
     return '$sign₹${value.abs().toStringAsFixed(2)}';
+  }
+  static String _formatDate(DateTime date) {
+    const monthNames = [
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec',
+    ];
+
+    final month = monthNames[date.month - 1];
+    final day = date.day.toString().padLeft(2, '0');
+    return '$month $day, ${date.year}';
   }
 
   @override
@@ -1798,6 +2472,7 @@ class _GroupsScreenState extends State<GroupsScreen>
                       child: _GroupBar(
                         group: group,
                         onTap: () => _openGroupDetailPopup(group),
+                        onLongPress: () => _onGroupLongPress(group),
                       ),
                     ),
                   ),
@@ -1852,10 +2527,12 @@ class _GroupBar extends StatelessWidget {
   const _GroupBar({
     required this.group,
     required this.onTap,
+    this.onLongPress,
   });
 
   final GroupSummary group;
   final VoidCallback onTap;
+  final VoidCallback? onLongPress;
 
   @override
   Widget build(BuildContext context) {
@@ -1881,6 +2558,7 @@ class _GroupBar extends StatelessWidget {
       child: InkWell(
         borderRadius: BorderRadius.circular(14),
         onTap: onTap,
+        onLongPress: onLongPress,
         child: Padding(
           padding: const EdgeInsets.all(14),
           child: Row(
@@ -1907,7 +2585,7 @@ class _GroupBar extends StatelessWidget {
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      'Created by ${group.createdByUserId}',
+                      'Created by ${group.createdByName}',
                       style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                             color: const Color(0xFF5A6E82),
                           ),
@@ -2160,7 +2838,8 @@ class _TransactionRow extends StatelessWidget {
         ),
       ),
     );
-  }
+}
+
 }
 
 class _QuickStat extends StatelessWidget {
@@ -2614,12 +3293,28 @@ class _MemberOption {
   final String displayName;
 }
 
+class _GroupMemberDirectoryItem {
+  const _GroupMemberDirectoryItem({
+    required this.userId,
+    required this.name,
+    required this.email,
+    required this.role,
+  });
+
+  final String userId;
+  final String name;
+  final String email;
+  final String role;
+}
+
 class GroupSummary {
   GroupSummary({
     required this.id,
     required this.name,
     required this.icon,
     required this.createdByUserId,
+    required this.createdByName,
+    required this.createdAt,
     required this.totalExpenses,
     required this.totalOwed,
     required this.balance,
@@ -2631,6 +3326,8 @@ class GroupSummary {
   final String name;
   final String icon;
   final String createdByUserId;
+  final String createdByName;
+  final DateTime createdAt;
   final double totalExpenses;
   final double totalOwed;
   final double balance;
