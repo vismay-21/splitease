@@ -307,6 +307,7 @@ class _GroupsScreenState extends State<GroupsScreen>
         setState(() {
           _groups = <GroupSummary>[];
           _pendingInvitations = <GroupInvitation>[];
+          _groupPreviewTransactions.clear();
           _isLoading = false;
           _hasLoadedOnce = true;
           _cachedGroups = List<GroupSummary>.from(_groups);
@@ -914,8 +915,9 @@ class _GroupsScreenState extends State<GroupsScreen>
         final maxHeight = MediaQuery.of(context).size.height * 0.82;
         final maxWidth = MediaQuery.of(context).size.width * 0.92;
         final createdDate = _formatDate(group.createdAt);
+        final localPreview = _groupPreviewTransactions[group.id] ?? <_GroupTransaction>[];
         var transactions = List<_GroupTransaction>.from(
-          _groupPreviewTransactions[group.id] ?? persistedTransactions,
+          persistedTransactions.isNotEmpty ? persistedTransactions : localPreview,
         );
         var selectedSection = 'transactions';
 
@@ -1184,7 +1186,7 @@ class _GroupsScreenState extends State<GroupsScreen>
                           onPressed: () => _openAddExpenseDialog(
                             group,
                             onPreviewGenerated: (computedTransactions) {
-                              final existing = _groupPreviewTransactions[group.id] ?? <_GroupTransaction>[];
+                              final existing = transactions;
                               final merged = <_GroupTransaction>[
                                 ...computedTransactions,
                                 ...existing,
