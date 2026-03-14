@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:app_links/app_links.dart';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:splitease/screens/unqually_screen.dart';
+import 'package:splitease/utils/algo.dart';
 import 'package:splitease/utils/upi_deepLink.dart';
 
 final _fakeGroups = [
@@ -306,6 +308,7 @@ class _GroupsScreenState extends State<GroupsScreen>
         setState(() {
           _groups = <GroupSummary>[];
           _pendingInvitations = <GroupInvitation>[];
+          _groupPreviewTransactions.clear();
           _isLoading = false;
           _hasLoadedOnce = true;
           _cachedGroups = List<GroupSummary>.from(_groups);
@@ -913,8 +916,9 @@ class _GroupsScreenState extends State<GroupsScreen>
         final maxHeight = MediaQuery.of(context).size.height * 0.82;
         final maxWidth = MediaQuery.of(context).size.width * 0.92;
         final createdDate = _formatDate(group.createdAt);
+        final localPreview = _groupPreviewTransactions[group.id] ?? <_GroupTransaction>[];
         var transactions = List<_GroupTransaction>.from(
-          _groupPreviewTransactions[group.id] ?? persistedTransactions,
+          persistedTransactions.isNotEmpty ? persistedTransactions : localPreview,
         );
         var selectedSection = 'transactions';
 
@@ -1183,7 +1187,7 @@ class _GroupsScreenState extends State<GroupsScreen>
                           onPressed: () => _openAddExpenseDialog(
                             group,
                             onPreviewGenerated: (computedTransactions) {
-                              final existing = _groupPreviewTransactions[group.id] ?? <_GroupTransaction>[];
+                              final existing = transactions;
                               final merged = <_GroupTransaction>[
                                 ...computedTransactions,
                                 ...existing,
@@ -1982,19 +1986,10 @@ class _GroupsScreenState extends State<GroupsScreen>
                                     ),
                                   ),
                                 ] else ...[
-                                  Container(
-                                    width: double.infinity,
-                                    padding: const EdgeInsets.all(12),
-                                    decoration: BoxDecoration(
-                                      color: const Color(0xFFF4F8FC),
-                                      borderRadius: BorderRadius.circular(10),
-                                    ),
-                                    child: Text(
-                                      'Unequal split setup will be added next.',
-                                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                                            color: const Color(0xFF5A6E82),
-                                          ),
-                                    ),
+                                  UnquallyScreen(
+                                    memberNames: members
+                                        .map((member) => member.displayName)
+                                        .toList(),
                                   ),
                                 ],
                               ],
@@ -2429,23 +2424,48 @@ class _GroupsScreenState extends State<GroupsScreen>
     required List<_GroupTransaction> transactions,
     required String currentUserId,
   }) {
+    final details = transactions
+        .map((tx) => tx.settlementDetails)
+        .whereType<_SettlementTransactionDetails>()
+        .toList();
+
+    final nameByUserId = <String, String>{};
+    for (final detail in details) {
+      if (detail.debtorUserId.isNotEmpty) {
+        nameByUserId[detail.debtorUserId] = detail.debtorName;
+      }
+      if (detail.creditorUserId.isNotEmpty) {
+        nameByUserId[detail.creditorUserId] = detail.creditorName;
+      }
+    }
+
+    final minimizedTransfers = computeMinimumSettlements(
+      obligations: details
+          .map(
+            (detail) => SettlementTransfer(
+              payerUserId: detail.debtorUserId,
+              payeeUserId: detail.creditorUserId,
+              amountCents: detail.amountCents,
+            ),
+          )
+          .toList(),
+    );
+
     final map = <String, _SettleUpSummary>{};
 
-    for (final tx in transactions) {
-      final detail = tx.settlementDetails;
-      if (detail == null) {
-        continue;
-      }
-
-      final isCurrentDebtor = detail.debtorUserId == currentUserId;
-      final isCurrentCreditor = detail.creditorUserId == currentUserId;
+    for (final transfer in minimizedTransfers) {
+      final isCurrentDebtor = transfer.payerUserId == currentUserId;
+      final isCurrentCreditor = transfer.payeeUserId == currentUserId;
       if (!isCurrentDebtor && !isCurrentCreditor) {
         continue;
       }
 
       final counterpartyUserId =
-          isCurrentDebtor ? detail.creditorUserId : detail.debtorUserId;
-      final counterpartyName = isCurrentDebtor ? detail.creditorName : detail.debtorName;
+          isCurrentDebtor ? transfer.payeeUserId : transfer.payerUserId;
+      final counterpartyName = nameByUserId[counterpartyUserId] ?? 'Member';
+
+      final fromName = nameByUserId[transfer.payerUserId] ?? 'Member';
+      final toName = nameByUserId[transfer.payeeUserId] ?? 'Member';
 
       final summary = map.putIfAbsent(
         counterpartyUserId,
@@ -2459,16 +2479,16 @@ class _GroupsScreenState extends State<GroupsScreen>
 
       summary.ledgerLines.add(
         _CounterpartyLedgerLine(
-          fromName: detail.debtorName,
-          toName: detail.creditorName,
-          amountCents: detail.amountCents,
+          fromName: fromName,
+          toName: toName,
+          amountCents: transfer.amountCents,
         ),
       );
 
       if (isCurrentDebtor) {
-        summary.netCents += detail.amountCents;
+        summary.netCents += transfer.amountCents;
       } else {
-        summary.netCents -= detail.amountCents;
+        summary.netCents -= transfer.amountCents;
       }
     }
 
