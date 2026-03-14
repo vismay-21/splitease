@@ -3,7 +3,7 @@ import 'dart:async';
 import 'package:app_links/app_links.dart';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'package:url_launcher/url_launcher.dart';
+import 'package:splitease/utils/upi_deepLink.dart';
 
 final _fakeGroups = [
   GroupSummary(
@@ -881,9 +881,24 @@ class _GroupsScreenState extends State<GroupsScreen>
                                           if (iOwe) ...[
                                             Expanded(
                                               child: FilledButton(
-                                                onPressed: () {
+                                                onPressed: () async {
                                                   Navigator.of(context).pop();
-                                                  _showMessage('Open UPI payment flow (stub).');
+
+                                                  final launched = await UpiDeepLink.launchUpiPayment(
+                                                    receiverName: member.name,
+                                                    amount: amount,
+                                                    note: 'SpliTease ${group.name}',
+                                                  );
+
+                                                  if (!mounted) {
+                                                    return;
+                                                  }
+
+                                                  _showMessage(
+                                                    launched
+                                                        ? 'UPI app opened for ${member.name}.'
+                                                        : 'Could not open UPI app on this device.',
+                                                  );
                                                 },
                                                 style: FilledButton.styleFrom(
                                                   padding: const EdgeInsets.symmetric(vertical: 12),
@@ -1052,11 +1067,6 @@ class _GroupsScreenState extends State<GroupsScreen>
     GroupMemberBalance receiver,
     double amount,
   ) async {
-    if ((receiver.upiId ?? '').isEmpty) {
-      _showMessage('This member has no UPI ID yet. Ask them to update it.');
-      return;
-    }
-
     final settlementId = await _recordSettlement(
       group.id,
       receiver.userId,
@@ -1075,21 +1085,14 @@ class _GroupsScreenState extends State<GroupsScreen>
       queryParameters: <String, String>{'settlement_id': settlementId},
     ).toString();
 
-    final upiUri = Uri(
-      scheme: 'upi',
-      host: 'pay',
-      queryParameters: <String, String>{
-        'pa': receiver.upiId!,
-        'pn': receiver.memberName,
-        'am': amount.toStringAsFixed(2),
-        'cu': 'INR',
-        'tn': 'SpliTease ${group.name}',
-        'tr': settlementId,
-        'url': callbackUri,
-      },
+    final launched = await UpiDeepLink.launchUpiPayment(
+      receiverName: receiver.memberName,
+      amount: amount,
+      recipientUpiId: receiver.upiId,
+      note: 'SpliTease ${group.name}',
+      transactionRef: settlementId,
+      callbackUrl: callbackUri,
     );
-
-    final launched = await launchUrl(upiUri, mode: LaunchMode.externalApplication);
     if (!launched) {
       await _updateSettlementStatus(settlementId, 'failed');
       _showMessage('Could not open UPI app on this device.');
