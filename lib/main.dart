@@ -56,7 +56,7 @@ class MyApp extends StatelessWidget {
           insetPadding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
         ),
       ),
-      home: const WelcomeScreen(nextPage: StartupSetupGate()),
+      home: const StartupSetupGate(),
     );
   }
 }
@@ -262,9 +262,36 @@ class AuthGate extends StatelessWidget {
           return const MainNavPage();
         }
 
-        return const LoginScreen();
+        return const SignedOutFlow();
       },
     );
+  }
+}
+
+class SignedOutFlow extends StatefulWidget {
+  const SignedOutFlow({super.key});
+
+  @override
+  State<SignedOutFlow> createState() => _SignedOutFlowState();
+}
+
+class _SignedOutFlowState extends State<SignedOutFlow> {
+  bool _showWelcome = true;
+
+  @override
+  Widget build(BuildContext context) {
+    if (_showWelcome) {
+      return WelcomeScreen(
+        nextPage: const LoginScreen(),
+        onGetStarted: () {
+          setState(() {
+            _showWelcome = false;
+          });
+        },
+      );
+    }
+
+    return const LoginScreen();
   }
 }
 
