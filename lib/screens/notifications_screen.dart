@@ -1,6 +1,8 @@
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
+import 'package:splitease/screens/groups_screen.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 class NotificationsScreen extends StatefulWidget {
   const NotificationsScreen({super.key});
@@ -23,6 +25,8 @@ class _NotificationItem {
     required this.actionLabel1,
     required this.actionLabel2,
     required this.date,
+    this.groupId,
+    this.senderUserId,
   });
 
   final String id;
@@ -33,14 +37,69 @@ class _NotificationItem {
   final String actionLabel1;
   final String actionLabel2;
   final DateTime date;
+  final String? groupId;
+  final String? senderUserId;
   _NotificationStatus status = _NotificationStatus.pending;
-}
 
-class _NotificationsSection {
-  _NotificationsSection({required this.title, required this.items});
+  factory _NotificationItem.fromDb(Map<String, dynamic> row) {
+    final amount = _asDouble(row['amount']);
+    final category = row['category']?.toString() ?? 'payment_received_confirmation';
+    final senderName = row['sender_name']?.toString().trim().isNotEmpty == true
+        ? row['sender_name']?.toString().trim() ?? 'Someone'
+        : 'Someone';
+    final methodValue = row['method']?.toString().toLowerCase() ?? '';
+    final method = methodValue == 'cash' ? 'Cash' : 'UPI';
+    final statusText = row['status']?.toString().toLowerCase() ?? 'pending';
 
-  final String title;
-  final List<_NotificationItem> items;
+    final isPaymentRequest = category == 'payment_request';
+
+    final item = _NotificationItem(
+      id: row['id']?.toString() ?? '',
+      title: isPaymentRequest
+          ? '$senderName has requested ₹${amount.toStringAsFixed(2)}'
+          : '$senderName has paid you ₹${amount.toStringAsFixed(2)} by $method. Did you receive it?',
+      subtitle: isPaymentRequest
+          ? 'Tap Pay to settle this request.'
+          : 'Tap Yes if received, or No if not received.',
+      type: _NotificationType.action,
+      category: category,
+      actionLabel1: isPaymentRequest ? 'Pay' : 'Yes',
+      actionLabel2: isPaymentRequest ? '' : 'No',
+      date: DateTime.tryParse(row['created_at']?.toString() ?? '')?.toLocal() ?? DateTime.now(),
+      groupId: row['group_id']?.toString(),
+      senderUserId: row['sender_user_id']?.toString(),
+    );
+
+    item.status = _statusFromDb(statusText);
+    return item;
+  }
+
+  static _NotificationStatus _statusFromDb(String status) {
+    switch (status) {
+      case 'confirmed':
+        return _NotificationStatus.confirmed;
+      case 'denied':
+        return _NotificationStatus.denied;
+      case 'settled':
+        return _NotificationStatus.settled;
+      case 'rejected':
+        return _NotificationStatus.rejected;
+      case 'accepted':
+        return _NotificationStatus.accepted;
+      default:
+        return _NotificationStatus.pending;
+    }
+  }
+
+  static double _asDouble(dynamic value) {
+    if (value == null) {
+      return 0;
+    }
+    if (value is num) {
+      return value.toDouble();
+    }
+    return double.tryParse(value.toString()) ?? 0;
+  }
 }
 
 class _NotificationsScreenState extends State<NotificationsScreen> {
@@ -48,88 +107,103 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
   static const _backgroundStart = Color(0xFFEAF5FA);
   static const _backgroundEnd = Color(0xFFD1E6F4);
 
-  final List<_NotificationsSection> _sections = [
-    _NotificationsSection(
-      title: 'Payment confirmation',
-      items: [
-        _NotificationItem(
-          id: 'pc1',
-          title: 'Alex paid you ₹150.00',
-          subtitle: 'Tap to confirm or deny.',
-          type: _NotificationType.action,
-          category: 'payment_confirmation',
-          actionLabel1: 'Confirm',
-          actionLabel2: 'Deny',
-          date: DateTime(2026, 3, 14, 11, 15),
-        ),
-        _NotificationItem(
-          id: 'pc2',
-          title: 'Alex confirmed your payment.',
-          subtitle: 'This is a feedback notification.',
-          type: _NotificationType.feedback,
-          category: 'payment_confirmation',
-          actionLabel1: '',
-          actionLabel2: '',
-          date: DateTime(2026, 3, 14, 11, 20),
-        ),
-      ],
-    ),
-    _NotificationsSection(
-      title: 'Payment requests',
-      items: [
-        _NotificationItem(
-          id: 'pr1',
-          title: 'Jordan has requested ₹250.00',
-          subtitle: 'Tap to settle up or reject.',
-          type: _NotificationType.action,
-          category: 'payment_request',
-          actionLabel1: 'Settle up',
-          actionLabel2: 'Reject',
-          date: DateTime(2026, 3, 14, 10, 45),
-        ),
-        _NotificationItem(
-          id: 'pr2',
-          title: 'Jordan has accepted your request and paid.',
-          subtitle: 'This is a feedback notification.',
-          type: _NotificationType.feedback,
-          category: 'payment_request',
-          actionLabel1: '',
-          actionLabel2: '',
-          date: DateTime(2026, 3, 14, 10, 55),
-        ),
-      ],
-    ),
-    _NotificationsSection(
-      title: 'Group invitations',
-      items: [
-        _NotificationItem(
-          id: 'gi1',
-          title: 'Taylor is inviting you to Weekend Trip',
-          subtitle: 'Tap to accept or reject.',
-          type: _NotificationType.action,
-          category: 'group_invite',
-          actionLabel1: 'Accept',
-          actionLabel2: 'Reject',
-          date: DateTime(2026, 3, 14, 9, 50),
-        ),
-        _NotificationItem(
-          id: 'gi2',
-          title: 'Taylor has accepted your invitation.',
-          subtitle: 'This is a feedback notification.',
-          type: _NotificationType.feedback,
-          category: 'group_invite',
-          actionLabel1: '',
-          actionLabel2: '',
-          date: DateTime(2026, 3, 14, 9, 55),
-        ),
-      ],
-    ),
-  ];
+  final SupabaseClient _client = Supabase.instance.client;
+  bool _isLoading = true;
+  String? _loadError;
+  List<_NotificationItem> _items = <_NotificationItem>[];
+
+  @override
+  void initState() {
+    super.initState();
+    _loadNotifications();
+  }
+
+  Future<void> _loadNotifications() async {
+    final user = _client.auth.currentUser;
+    if (user == null) {
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _isLoading = false;
+        _items = <_NotificationItem>[];
+        _loadError = null;
+      });
+      return;
+    }
+
+    setState(() {
+      _isLoading = true;
+      _loadError = null;
+    });
+
+    try {
+      final rows = await _client
+          .from('group_notifications')
+          .select(
+            'id,group_id,sender_user_id,sender_name,amount,method,status,created_at,category',
+          )
+          .eq('receiver_user_id', user.id)
+          .order('created_at', ascending: false) as List<dynamic>;
+
+      final items = rows
+          .map((row) => _NotificationItem.fromDb(Map<String, dynamic>.from(row as Map)))
+          .where((item) => item.id.isNotEmpty)
+          .toList();
+
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _items = items;
+        _isLoading = false;
+      });
+    } on PostgrestException catch (error) {
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _isLoading = false;
+        _loadError = 'Could not load notifications (${error.message}).';
+      });
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _isLoading = false;
+        _loadError = 'Unable to load notifications right now.';
+      });
+    }
+  }
 
   void _updateStatus(_NotificationItem item, _NotificationStatus status) {
     setState(() {
       item.status = status;
     });
+
+    final dbStatus = switch (status) {
+      _NotificationStatus.confirmed => 'confirmed',
+      _NotificationStatus.denied => 'denied',
+      _NotificationStatus.settled => 'settled',
+      _NotificationStatus.rejected => 'rejected',
+      _NotificationStatus.accepted => 'accepted',
+      _NotificationStatus.pending => 'pending',
+    };
+
+    _client
+        .from('group_notifications')
+        .update({
+          'status': dbStatus,
+          'responded_at': DateTime.now().toIso8601String(),
+        })
+        .eq('id', item.id)
+        .then((_) {})
+        .catchError((_) {});
   }
 
   Widget _buildStatusBadge(_NotificationStatus status) {
@@ -213,6 +287,38 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
       return _buildStatusBadge(item.status);
     }
 
+    if (item.category == 'payment_request') {
+      return SizedBox(
+        width: double.infinity,
+        child: ElevatedButton(
+          onPressed: () {
+            _updateStatus(item, _NotificationStatus.confirmed);
+
+            final groupId = item.groupId ?? '';
+            final counterpartyUserId = item.senderUserId ?? '';
+            if (groupId.isNotEmpty && counterpartyUserId.isNotEmpty) {
+              GroupsScreen.setPendingSettleUpIntent(
+                groupId: groupId,
+                counterpartyUserId: counterpartyUserId,
+              );
+            }
+
+            Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (_) => const GroupsScreen(),
+              ),
+            );
+          },
+          style: ElevatedButton.styleFrom(
+            backgroundColor: const Color(0xFF1A4A8F),
+            foregroundColor: Colors.white,
+            padding: const EdgeInsets.symmetric(vertical: 10),
+          ),
+          child: Text(item.actionLabel1),
+        ),
+      );
+    }
+
     final onPrimary = Colors.white;
     final confirmColor = Colors.green;
     final rejectColor = Colors.red;
@@ -222,13 +328,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
         Expanded(
           child: ElevatedButton(
             onPressed: () {
-              if (item.category == 'payment_confirmation') {
-                _updateStatus(item, _NotificationStatus.confirmed);
-              } else if (item.category == 'payment_request') {
-                _updateStatus(item, _NotificationStatus.settled);
-              } else if (item.category == 'group_invite') {
-                _updateStatus(item, _NotificationStatus.accepted);
-              }
+              _updateStatus(item, _NotificationStatus.confirmed);
             },
             style: ElevatedButton.styleFrom(
               backgroundColor: confirmColor,
@@ -242,13 +342,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
         Expanded(
           child: ElevatedButton(
             onPressed: () {
-              if (item.category == 'payment_confirmation') {
-                _updateStatus(item, _NotificationStatus.denied);
-              } else if (item.category == 'payment_request') {
-                _updateStatus(item, _NotificationStatus.rejected);
-              } else if (item.category == 'group_invite') {
-                _updateStatus(item, _NotificationStatus.rejected);
-              }
+              _updateStatus(item, _NotificationStatus.denied);
             },
             style: ElevatedButton.styleFrom(
               backgroundColor: rejectColor,
@@ -344,7 +438,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final items = _sections.expand((s) => s.items).toList()
+    final items = List<_NotificationItem>.from(_items)
       ..sort((a, b) => b.date.compareTo(a.date));
 
     return Scaffold(
@@ -367,14 +461,44 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
           ),
         ),
         child: SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 18),
-            child: SingleChildScrollView(
+          child: RefreshIndicator(
+            onRefresh: _loadNotifications,
+            child: ListView(
               physics: const BouncingScrollPhysics(),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: items.map(_buildNotificationCard).toList(),
-              ),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 18),
+              children: [
+                if (_isLoading)
+                  const Padding(
+                    padding: EdgeInsets.only(top: 48),
+                    child: Center(child: CircularProgressIndicator()),
+                  )
+                else if (_loadError != null)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 40),
+                    child: Text(
+                      _loadError!,
+                      style: const TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        color: Color(0xFFB33A2E),
+                      ),
+                    ),
+                  )
+                else if (items.isEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 40),
+                    child: Text(
+                      'No notifications yet.',
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.black.withAlpha(140),
+                      ),
+                    ),
+                  )
+                else
+                  ...items.map(_buildNotificationCard),
+              ],
             ),
           ),
         ),
