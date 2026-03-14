@@ -1307,12 +1307,12 @@ class _GroupsScreenState extends State<GroupsScreen>
           builder: (context, setModalState) {
             return Dialog(
               insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
-              backgroundColor: Colors.transparent,
+              backgroundColor: Colors.white,
               child: SizedBox(
                 height: maxHeight,
                 width: maxWidth,
                 child: ClipRRect(
-                  borderRadius: BorderRadius.circular(26),
+                  borderRadius: BorderRadius.circular(36),
                   child: Material(
                     color: Colors.white,
                     child: Stack(
@@ -1478,7 +1478,7 @@ class _GroupsScreenState extends State<GroupsScreen>
                           ],
                         ),
                       ),
-                      const Divider(height: 1),
+                      const SizedBox(height: 8),
 
                       // Owe / Owed cards
                       Padding(
@@ -1509,7 +1509,7 @@ class _GroupsScreenState extends State<GroupsScreen>
                           ],
                         ),
                       ),
-                      const Divider(height: 1),
+                      const SizedBox(height: 8),
 
                       // Section toggle
                       Padding(
@@ -1522,6 +1522,7 @@ class _GroupsScreenState extends State<GroupsScreen>
                                   width: double.infinity,
                                   child: Text('Transactions', textAlign: TextAlign.center),
                                 ),
+                                showCheckmark: false,
                                 selected: selectedSection == 'transactions',
                                 onSelected: (_) {
                                   setModalState(() {
@@ -1537,6 +1538,7 @@ class _GroupsScreenState extends State<GroupsScreen>
                                   width: double.infinity,
                                   child: Text('Balances', textAlign: TextAlign.center),
                                 ),
+                                showCheckmark: false,
                                 selected: selectedSection == 'balances',
                                 onSelected: (_) {
                                   setModalState(() {
@@ -1552,6 +1554,7 @@ class _GroupsScreenState extends State<GroupsScreen>
                                   width: double.infinity,
                                   child: Text('Settle up', textAlign: TextAlign.center),
                                 ),
+                                showCheckmark: false,
                                 selected: selectedSection == 'settleup',
                                 onSelected: (_) {
                                   setModalState(() {
@@ -1563,7 +1566,7 @@ class _GroupsScreenState extends State<GroupsScreen>
                           ],
                         ),
                       ),
-                      const Divider(height: 1),
+                      const SizedBox(height: 8),
 
                           // Section content
                           Builder(
@@ -1586,6 +1589,7 @@ class _GroupsScreenState extends State<GroupsScreen>
                                 return _buildGroupSectionTransactions(
                                   items: balanceTransactions,
                                   emptyText: 'No balance splits yet.',
+                                  compactVisual: true,
                                 );
                               }
 
@@ -1690,7 +1694,7 @@ class _GroupsScreenState extends State<GroupsScreen>
                             ],
                           ),
                         ),
-                        const Divider(height: 1),
+                        const SizedBox(height: 8),
                         Expanded(
                           child: Padding(
                             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
@@ -2265,14 +2269,22 @@ class _GroupsScreenState extends State<GroupsScreen>
             builder: (context, setModalState) {
               return Dialog(
                 insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
+                backgroundColor: Colors.white,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(36),
+                ),
                 child: SizedBox(
                   width: maxWidth,
                   height: maxHeight,
-                  child: Padding(
-                    padding: const EdgeInsets.all(16),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(36),
+                    child: Material(
+                      color: Colors.white,
+                      child: Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
                         Row(
                           children: [
                             Expanded(
@@ -2377,7 +2389,7 @@ class _GroupsScreenState extends State<GroupsScreen>
                                 const SizedBox(height: 14),
                                 if (splitMode == 'equally') ...[
                                   Text(
-                                    'Participants',
+                                    'Participants:',
                                     style: Theme.of(context).textTheme.titleSmall?.copyWith(
                                           fontWeight: FontWeight.w700,
                                         ),
@@ -2471,7 +2483,9 @@ class _GroupsScreenState extends State<GroupsScreen>
                             ),
                           ],
                         ),
-                      ],
+                          ],
+                        ),
+                      ),
                     ),
                   ),
                 ),
@@ -2564,6 +2578,7 @@ class _GroupsScreenState extends State<GroupsScreen>
   Widget _buildGroupSectionTransactions({
     required List<_GroupTransaction> items,
     required String emptyText,
+    bool compactVisual = false,
   }) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
@@ -2573,7 +2588,7 @@ class _GroupsScreenState extends State<GroupsScreen>
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
                 color: const Color(0xFFF4F8FC),
-                borderRadius: BorderRadius.circular(12),
+                borderRadius: BorderRadius.circular(24),
               ),
               child: Text(
                 emptyText,
@@ -2591,6 +2606,7 @@ class _GroupsScreenState extends State<GroupsScreen>
                 final transaction = items[index];
                 return _TransactionRow(
                   transaction: transaction,
+                  compactVisual: compactVisual,
                   onTap: transaction.expenseDetails == null
                       ? null
                       : () => _openExpenseTransactionDetailsDialog(
@@ -2665,7 +2681,7 @@ class _GroupsScreenState extends State<GroupsScreen>
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
                 color: const Color(0xFFF4F8FC),
-                borderRadius: BorderRadius.circular(12),
+                borderRadius: BorderRadius.circular(24),
               ),
               child: Text(
                 'No pending settlements yet.',
@@ -2703,16 +2719,16 @@ class _GroupsScreenState extends State<GroupsScreen>
               return Container(
                 padding: const EdgeInsets.all(14),
                 decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(18),
+                  color: Colors.white.withValues(alpha: 0.78),
+                  borderRadius: BorderRadius.circular(24),
                   border: summary.counterpartyUserId == focusCounterpartyUserId
                       ? Border.all(color: const Color(0xFF1A4A8F), width: 1.4)
                       : null,
                   boxShadow: [
                     BoxShadow(
-                      color: Colors.black.withAlpha(10),
-                      blurRadius: 10,
-                      offset: const Offset(0, 4),
+                      color: const Color(0xFF1A4A8F).withValues(alpha: 0.12),
+                      blurRadius: 18,
+                      offset: const Offset(0, 8),
                     ),
                   ],
                 ),
@@ -2785,16 +2801,27 @@ class _GroupsScreenState extends State<GroupsScreen>
                             ],
                           ),
                         ),
-                        Text(
-                          _money(amount),
-                          style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                                fontWeight: FontWeight.w900,
-                                color: owesMe
-                                    ? const Color(0xFF1B7D3A)
-                                    : iOwe
-                                        ? const Color(0xFFB33A2E)
-                                        : const Color(0xFF5C6470),
+                        SizedBox(
+                          width: 108,
+                          child: Align(
+                            alignment: Alignment.centerRight,
+                            child: FittedBox(
+                              fit: BoxFit.scaleDown,
+                              alignment: Alignment.centerRight,
+                              child: Text(
+                                _money(amount),
+                                maxLines: 1,
+                                style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                                      fontWeight: FontWeight.w900,
+                                      color: owesMe
+                                          ? const Color(0xFF1B7D3A)
+                                          : iOwe
+                                              ? const Color(0xFFB33A2E)
+                                              : const Color(0xFF5C6470),
+                                    ),
                               ),
+                            ),
+                          ),
                         ),
                       ],
                     ),
@@ -4077,8 +4104,8 @@ class _GroupsScreenState extends State<GroupsScreen>
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
             colors: [
-              Color(0xFFE9F4FF),
-              Color(0xFFF1F8FF),
+              Color(0xFFEAF5FA),
+              Color(0xFFD1E6F4),
             ],
           ),
         ),
@@ -4108,8 +4135,8 @@ class _GroupsScreenState extends State<GroupsScreen>
           begin: Alignment.topCenter,
           end: Alignment.bottomCenter,
           colors: [
-            Color(0xFFE9F4FF),
-            Color(0xFFF1F8FF),
+            Color(0xFFEAF5FA),
+            Color(0xFFD1E6F4),
           ],
         ),
       ),
@@ -4122,10 +4149,12 @@ class _GroupsScreenState extends State<GroupsScreen>
               children: [
                 Text(
                   'Groups',
-                  style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                        fontSize: 34,
-                        fontWeight: FontWeight.w700,
-                      ),
+                  style: const TextStyle(
+                    fontSize: 25,
+                    fontWeight: FontWeight.w800,
+                    color: Colors.black,
+                    letterSpacing: 0.4,
+                  ),
                 ),
                 const SizedBox(height: 16),
                 if (_groups.isEmpty)
@@ -4236,14 +4265,14 @@ class _GroupBar extends StatelessWidget {
         : 'Settled up';
 
     return Material(
-      color: Colors.white,
-      borderRadius: BorderRadius.circular(14),
+      color: Colors.white.withValues(alpha: 0.78),
+      borderRadius: BorderRadius.circular(36),
       child: InkWell(
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(36),
         onTap: onTap,
         onLongPress: onLongPress,
         child: Padding(
-          padding: const EdgeInsets.all(14),
+          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -4275,7 +4304,15 @@ class _GroupBar extends StatelessWidget {
                     ),
                     const SizedBox(height: 6),
                     Text(
-                      '${group.memberCount} members  •  Total spending: ${_GroupsScreenState._money(totalExpenses)}',
+                      '${group.memberCount} members',
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                            color: const Color(0xFF3A4450),
+                            fontWeight: FontWeight.w600,
+                          ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      'Total spending: ${_GroupsScreenState._money(totalExpenses)}',
                       style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                             color: const Color(0xFF3A4450),
                             fontWeight: FontWeight.w600,
@@ -4375,13 +4412,13 @@ class _BalanceCard extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(18),
+        color: Colors.white.withValues(alpha: 0.78),
+        borderRadius: BorderRadius.circular(24),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withAlpha(10),
-            blurRadius: 14,
-            offset: const Offset(0, 7),
+            color: const Color(0xFF1A4A8F).withValues(alpha: 0.12),
+            blurRadius: 18,
+            offset: const Offset(0, 8),
           ),
         ],
       ),
@@ -4423,60 +4460,92 @@ class _BalanceCard extends StatelessWidget {
 }
 
 class _TransactionRow extends StatelessWidget {
-  const _TransactionRow({required this.transaction, this.onTap});
+  const _TransactionRow({
+    required this.transaction,
+    this.onTap,
+    this.compactVisual = false,
+  });
 
   final _GroupTransaction transaction;
   final VoidCallback? onTap;
+  final bool compactVisual;
 
   @override
   Widget build(BuildContext context) {
+    final dateParts = transaction.date.trim().split(RegExp(r'\s+'));
+    final topDate = dateParts.isEmpty ? transaction.date : dateParts.first;
+    final bottomDate = dateParts.length > 1 ? dateParts.sublist(1).join(' ') : '';
+    final dateWidth = compactVisual ? 56.0 : 60.0;
+    final iconSquare = compactVisual ? 40.0 : 44.0;
+    final iconSize = compactVisual ? 20.0 : 21.0;
+    final sideGap = compactVisual ? 8.0 : 9.0;
+    final titleSize = compactVisual ? 14.5 : 16.0;
+
     return Material(
       color: Colors.transparent,
       child: InkWell(
-        borderRadius: BorderRadius.circular(18),
+        borderRadius: BorderRadius.circular(24),
         onTap: onTap,
         child: Container(
           margin: const EdgeInsets.only(bottom: 10),
           decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(18),
+            color: Colors.white.withValues(alpha: 0.78),
+            borderRadius: BorderRadius.circular(24),
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withAlpha(10),
-                blurRadius: 10,
-                offset: const Offset(0, 5),
+                color: const Color(0xFF1A4A8F).withValues(alpha: 0.12),
+                blurRadius: 18,
+                offset: const Offset(0, 8),
               ),
             ],
           ),
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
             child: Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
               children: [
-                Expanded(
-                  flex: 2,
+                SizedBox(
+                  width: dateWidth,
                   child: Container(
-                    padding: const EdgeInsets.all(10),
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 9),
                     decoration: BoxDecoration(
                       color: const Color(0xFFE9F4FF),
-                      borderRadius: BorderRadius.circular(14),
+                      borderRadius: BorderRadius.circular(18),
                     ),
-                    child: Center(
-                      child: Text(
-                        transaction.date,
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                              color: const Color(0xFF3A4450),
-                              fontWeight: FontWeight.w700,
-                            ),
-                        textAlign: TextAlign.center,
-                      ),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          topDate,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                                color: const Color(0xFF3A4450),
+                                fontWeight: FontWeight.w800,
+                              ),
+                          textAlign: TextAlign.center,
+                        ),
+                        if (bottomDate.isNotEmpty)
+                          Text(
+                            bottomDate,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                                  color: const Color(0xFF3A4450),
+                                  fontWeight: FontWeight.w800,
+                                ),
+                            textAlign: TextAlign.center,
+                          ),
+                      ],
                     ),
                   ),
                 ),
-                const SizedBox(width: 10),
-                Expanded(
-                  flex: 1,
+                SizedBox(width: sideGap),
+                SizedBox(
+                  width: iconSquare,
+                  height: iconSquare,
                   child: Container(
-                    padding: const EdgeInsets.all(10),
+                    alignment: Alignment.center,
                     decoration: BoxDecoration(
                       color: const Color(0xFFF5F8FC),
                       borderRadius: BorderRadius.circular(14),
@@ -4484,26 +4553,30 @@ class _TransactionRow extends StatelessWidget {
                     child: Icon(
                       transaction.icon,
                       color: const Color(0xFF1D6CAB),
-                      size: 22,
+                      size: iconSize,
                     ),
                   ),
                 ),
-                const SizedBox(width: 10),
+                SizedBox(width: sideGap),
                 Expanded(
-                  flex: 5,
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
                       Text(
                         transaction.title,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
                         style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                          fontSize: titleSize,
                               fontWeight: FontWeight.w700,
                             ),
                       ),
                       const SizedBox(height: 4),
                       Text(
                         transaction.subtitle,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
                         style: Theme.of(context).textTheme.bodySmall?.copyWith(
                               color: const Color(0xFF5A6E82),
                             ),
@@ -4512,16 +4585,25 @@ class _TransactionRow extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(width: 10),
-                Expanded(
-                  flex: 2,
-                  child: Text(
-                    '${transaction.isCredit ? '+' : '-'}₹${transaction.amount.toStringAsFixed(2)}',
-                    textAlign: TextAlign.right,
-                    style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                          fontWeight: FontWeight.w700,
-                          color:
-                              transaction.isCredit ? const Color(0xFF1B7D3A) : const Color(0xFFB33A2E),
-                        ),
+                SizedBox(
+                  width: 102,
+                  child: Align(
+                    alignment: Alignment.centerRight,
+                    child: FittedBox(
+                      fit: BoxFit.scaleDown,
+                      alignment: Alignment.centerRight,
+                      child: Text(
+                        '${transaction.isCredit ? '+' : '-'}₹${transaction.amount.toStringAsFixed(2)}',
+                        maxLines: 1,
+                        textAlign: TextAlign.right,
+                        style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                              fontWeight: FontWeight.w700,
+                              color: transaction.isCredit
+                                  ? const Color(0xFF1B7D3A)
+                                  : const Color(0xFFB33A2E),
+                            ),
+                      ),
+                    ),
                   ),
                 ),
               ],
@@ -4851,7 +4933,9 @@ class _ExpenseListCard extends StatelessWidget {
                                 ),
                           ),
                           const SizedBox(height: 3),
-                          Text('Amount: ${_GroupsScreenState._money(expense.amount)}'),
+                          Text(
+                            'Amount: ${expense.amount < 0 ? '-' : ''}₹${expense.amount.abs().toStringAsFixed(2)}',
+                          ),
                           Text('Paid by: ${expense.paidBy}'),
                           Text(
                             'Date: ${expense.date.year}-${expense.date.month.toString().padLeft(2, '0')}-${expense.date.day.toString().padLeft(2, '0')}',
