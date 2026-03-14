@@ -129,6 +129,13 @@ class _SettleUpSummary {
 
 enum _PaymentApprovalStatus { pending, confirmed, denied }
 
+class _PayReceiveAmounts {
+  const _PayReceiveAmounts({required this.toPay, required this.toReceive});
+
+  final double toPay;
+  final double toReceive;
+}
+
 class GroupSettleUpIntent {
   const GroupSettleUpIntent({required this.groupId, required this.counterpartyUserId});
 
@@ -200,6 +207,7 @@ class GroupsScreen extends StatefulWidget {
   const GroupsScreen({super.key});
 
   static GroupSettleUpIntent? _pendingSettleUpIntent;
+  static String? _pendingGroupPopupId;
 
   static void setPendingSettleUpIntent({
     required String groupId,
@@ -215,6 +223,16 @@ class GroupsScreen extends StatefulWidget {
     final intent = _pendingSettleUpIntent;
     _pendingSettleUpIntent = null;
     return intent;
+  }
+
+  static void setPendingGroupPopup({required String groupId}) {
+    _pendingGroupPopupId = groupId;
+  }
+
+  static String? takePendingGroupPopup() {
+    final groupId = _pendingGroupPopupId;
+    _pendingGroupPopupId = null;
+    return groupId;
   }
 
   @override
@@ -371,7 +389,9 @@ class _GroupsScreenState extends State<GroupsScreen>
         _cachedInvitations = List<GroupInvitation>.from(_pendingInvitations);
       });
 
-      _tryOpenPendingSettleUpIntent(groups);
+      if (!_tryOpenPendingGroupPopup(groups)) {
+        _tryOpenPendingSettleUpIntent(groups);
+      }
     } on PostgrestException catch (error) {
       if (!mounted) {
         return;
@@ -393,6 +413,35 @@ class _GroupsScreenState extends State<GroupsScreen>
         _loadError = 'Unable to load groups right now.';
       });
     }
+  }
+
+  bool _tryOpenPendingGroupPopup(List<GroupSummary> groups) {
+    final pendingGroupId = GroupsScreen.takePendingGroupPopup();
+    if (pendingGroupId == null || pendingGroupId.isEmpty) {
+      return false;
+    }
+
+    GroupSummary? targetGroup;
+    for (final group in groups) {
+      if (group.id == pendingGroupId) {
+        targetGroup = group;
+        break;
+      }
+    }
+
+    if (targetGroup == null) {
+      _showMessage('Requested group not found.');
+      return false;
+    }
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+      _openGroupDetailPopup(targetGroup!);
+    });
+
+    return true;
   }
 
   void _tryOpenPendingSettleUpIntent(List<GroupSummary> groups) {
@@ -441,6 +490,21 @@ class _GroupsScreenState extends State<GroupsScreen>
       return <GroupSummary>[];
     }
 
+    final fallbackBalanceByGroupId = <String, double>{};
+    for (final row in memberships) {
+      final groupId = row['group_id']?.toString() ?? '';
+      if (groupId.isEmpty) {
+        continue;
+      }
+      fallbackBalanceByGroupId[groupId] = _asDouble(row['balance']);
+    }
+
+    final payReceiveByGroupId = await _computePayReceiveByGroup(
+      userId: userId,
+      groupIds: groupIds,
+      fallbackBalanceByGroupId: fallbackBalanceByGroupId,
+    );
+
     final groupRows = await _client
         .from('groups')
         .select(
@@ -469,7 +533,10 @@ class _GroupsScreenState extends State<GroupsScreen>
               DateTime.now(),
           totalExpenses: _asDouble(row['total_expenses']),
           totalOwed: _asDouble(row['total_owed']),
-          balance: _asDouble(row['balance']),
+          balance: (payReceiveByGroupId[groupId]?.toReceive ?? 0) -
+              (payReceiveByGroupId[groupId]?.toPay ?? 0),
+          toPayAmount: payReceiveByGroupId[groupId]?.toPay ?? 0,
+          toReceiveAmount: payReceiveByGroupId[groupId]?.toReceive ?? 0,
           settlementStatus: row['settlement_status']?.toString(),
           memberCount: memberCounts[groupId] ?? 0,
         ),
@@ -478,6 +545,68 @@ class _GroupsScreenState extends State<GroupsScreen>
 
     summaries.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
     return summaries;
+  }
+
+  Future<Map<String, _PayReceiveAmounts>> _computePayReceiveByGroup({
+    required String userId,
+    required List<String> groupIds,
+    required Map<String, double> fallbackBalanceByGroupId,
+  }) async {
+    final rows = await _client
+        .from('group_settlements')
+        .select('group_id,payer_user_id,receiver_user_id,amount,method,status')
+        .inFilter('group_id', groupIds)
+        .eq('method', 'split')
+        .eq('status', 'pending') as List<dynamic>;
+
+    final obligationsByGroup = <String, List<SettlementTransfer>>{};
+    for (final row in rows) {
+      final groupId = row['group_id']?.toString() ?? '';
+      final payerUserId = row['payer_user_id']?.toString() ?? '';
+      final receiverUserId = row['receiver_user_id']?.toString() ?? '';
+      final amount = _asDouble(row['amount']);
+      if (groupId.isEmpty || payerUserId.isEmpty || receiverUserId.isEmpty || amount <= 0) {
+        continue;
+      }
+
+      obligationsByGroup.putIfAbsent(groupId, () => <SettlementTransfer>[]).add(
+            SettlementTransfer(
+              payerUserId: payerUserId,
+              payeeUserId: receiverUserId,
+              amountCents: (amount * 100).round(),
+            ),
+          );
+    }
+
+    final results = <String, _PayReceiveAmounts>{};
+    for (final groupId in groupIds) {
+      final obligations = obligationsByGroup[groupId] ?? <SettlementTransfer>[];
+
+      if (obligations.isNotEmpty) {
+        final minimized = computeMinimumSettlements(obligations: obligations);
+        var toPay = 0.0;
+        var toReceive = 0.0;
+
+        for (final transfer in minimized) {
+          if (transfer.payerUserId == userId) {
+            toPay += transfer.amountCents / 100;
+          }
+          if (transfer.payeeUserId == userId) {
+            toReceive += transfer.amountCents / 100;
+          }
+        }
+
+        results[groupId] = _PayReceiveAmounts(toPay: toPay, toReceive: toReceive);
+      } else {
+        final fallback = fallbackBalanceByGroupId[groupId] ?? 0;
+        results[groupId] = _PayReceiveAmounts(
+          toPay: fallback < 0 ? -fallback : 0,
+          toReceive: fallback > 0 ? fallback : 0,
+        );
+      }
+    }
+
+    return results;
   }
 
   Future<Map<String, String>> _fetchCreatorNames(List<String> groupIds) async {
@@ -1137,8 +1266,8 @@ class _GroupsScreenState extends State<GroupsScreen>
     String initialSection = 'transactions',
     String? focusCounterpartyUserId,
   }) async {
-    final youOwe = group.balance < 0 ? -group.balance : 0.0;
-    final youAreOwed = group.balance > 0 ? group.balance : 0.0;
+    final youOwe = group.toPayAmount;
+    final youAreOwed = group.toReceiveAmount;
     List<_GroupTransaction> persistedTransactions = <_GroupTransaction>[];
     var approvalByPair = <String, _PaymentApprovalStatus>{};
     var pendingRequestPairs = <String>{};
@@ -1268,40 +1397,79 @@ class _GroupsScreenState extends State<GroupsScreen>
                                 ),
                                 const SizedBox(height: 12),
                                 Row(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
-                                    const Icon(Icons.person, size: 18, color: Color(0xFF5A6E82)),
-                                    const SizedBox(width: 6),
-                                    Text(
-                                      'Created by ${group.createdByName}',
-                                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                                            color: const Color(0xFF5A6E82),
+                                    Expanded(
+                                      child: Column(
+                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        children: [
+                                          Row(
+                                            children: [
+                                              const Icon(Icons.person, size: 18, color: Color(0xFF5A6E82)),
+                                              const SizedBox(width: 6),
+                                              Text(
+                                                'Created by ${group.createdByName}',
+                                                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                                                      color: const Color(0xFF5A6E82),
+                                                    ),
+                                              ),
+                                            ],
                                           ),
+                                          const SizedBox(height: 8),
+                                          Row(
+                                            children: [
+                                              const Icon(Icons.group, size: 18, color: Color(0xFF5A6E82)),
+                                              const SizedBox(width: 6),
+                                              Text(
+                                                '${group.memberCount} people',
+                                                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                                                      color: const Color(0xFF5A6E82),
+                                                    ),
+                                              ),
+                                            ],
+                                          ),
+                                          const SizedBox(height: 8),
+                                          Row(
+                                            children: [
+                                              const Icon(Icons.calendar_today, size: 18, color: Color(0xFF5A6E82)),
+                                              const SizedBox(width: 6),
+                                              Text(
+                                                'Created $createdDate',
+                                                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                                                      color: const Color(0xFF5A6E82),
+                                                    ),
+                                              ),
+                                            ],
+                                          ),
+                                        ],
+                                      ),
                                     ),
-                                  ],
-                                ),
-                                const SizedBox(height: 8),
-                                Row(
-                                  children: [
-                                    const Icon(Icons.group, size: 18, color: Color(0xFF5A6E82)),
-                                    const SizedBox(width: 6),
-                                    Text(
-                                      '${group.memberCount} people',
-                                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                                            color: const Color(0xFF5A6E82),
-                                          ),
-                                    ),
-                                  ],
-                                ),
-                                const SizedBox(height: 8),
-                                Row(
-                                  children: [
-                                    const Icon(Icons.calendar_today, size: 18, color: Color(0xFF5A6E82)),
-                                    const SizedBox(width: 6),
-                                    Text(
-                                      'Created $createdDate',
-                                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                                            color: const Color(0xFF5A6E82),
-                                          ),
+                                    const SizedBox(width: 12),
+                                    Padding(
+                                      padding: const EdgeInsets.only(top: 10),
+                                      child: FloatingActionButton(
+                                        heroTag: 'group-add-expense-${group.id}',
+                                        backgroundColor: const Color(0xFF1A4A8F),
+                                        foregroundColor: Colors.white,
+                                        onPressed: () => _openAddExpenseDialog(
+                                          group,
+                                          onPreviewGenerated: (computedTransactions) {
+                                            final existing = transactions;
+                                            final merged = _sortTransactionsNewestFirst(<_GroupTransaction>[
+                                              ...computedTransactions,
+                                              ...existing,
+                                            ]);
+
+                                            setState(() {
+                                              _groupPreviewTransactions[group.id] = merged;
+                                            });
+                                            setModalState(() {
+                                              transactions = List<_GroupTransaction>.from(merged);
+                                            });
+                                          },
+                                        ),
+                                        child: const Icon(Icons.add),
+                                      ),
                                     ),
                                   ],
                                 ),
@@ -1446,36 +1614,6 @@ class _GroupsScreenState extends State<GroupsScreen>
                             },
                           ),
                         ],
-                      ),
-                    ),
-                    Positioned(
-                      left: 0,
-                      right: 0,
-                      bottom: 14,
-                      child: Center(
-                        child: FloatingActionButton(
-                          heroTag: 'group-add-expense-${group.id}',
-                          backgroundColor: const Color(0xFF1A4A8F),
-                          foregroundColor: Colors.white,
-                          onPressed: () => _openAddExpenseDialog(
-                            group,
-                            onPreviewGenerated: (computedTransactions) {
-                              final existing = transactions;
-                              final merged = _sortTransactionsNewestFirst(<_GroupTransaction>[
-                                ...computedTransactions,
-                                ...existing,
-                              ]);
-
-                              setState(() {
-                                _groupPreviewTransactions[group.id] = merged;
-                              });
-                              setModalState(() {
-                                transactions = List<_GroupTransaction>.from(merged);
-                              });
-                            },
-                          ),
-                          child: const Icon(Icons.add),
-                        ),
                       ),
                     ),
                       ],
@@ -4077,9 +4215,15 @@ class _GroupBar extends StatelessWidget {
   Widget build(BuildContext context) {
     final totalExpenses = _safeDouble(() => group.totalExpenses);
 
-    final money = _GroupsScreenState._money(group.balance);
-    final bool isOwed = group.balance > 0;
-    final bool isOwe = group.balance < 0;
+    final toPay = _safeDouble(() => group.toPayAmount);
+    final toReceive = _safeDouble(() => group.toReceiveAmount);
+    final bool isOwe = toPay > 0;
+    final bool isOwed = toReceive > 0;
+    final money = isOwe
+      ? _GroupsScreenState._money(-toPay)
+      : isOwed
+        ? _GroupsScreenState._money(toReceive)
+        : _GroupsScreenState._money(0);
     final Color amountColor = isOwe
         ? const Color(0xFFB33A2E)
         : isOwed
@@ -4875,6 +5019,8 @@ class GroupSummary {
     required this.balance,
     required this.memberCount,
     this.settlementStatus,
+    this.toPayAmount = 0,
+    this.toReceiveAmount = 0,
   });
 
   final String id;
@@ -4886,6 +5032,8 @@ class GroupSummary {
   final double totalExpenses;
   final double totalOwed;
   final double balance;
+  final double toPayAmount;
+  final double toReceiveAmount;
   final int memberCount;
   final String? settlementStatus;
 }
