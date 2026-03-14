@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:app_links/app_links.dart';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:splitease/utils/algo.dart';
 import 'package:splitease/utils/upi_deepLink.dart';
 
 final _fakeGroups = [
@@ -2429,23 +2430,48 @@ class _GroupsScreenState extends State<GroupsScreen>
     required List<_GroupTransaction> transactions,
     required String currentUserId,
   }) {
+    final details = transactions
+        .map((tx) => tx.settlementDetails)
+        .whereType<_SettlementTransactionDetails>()
+        .toList();
+
+    final nameByUserId = <String, String>{};
+    for (final detail in details) {
+      if (detail.debtorUserId.isNotEmpty) {
+        nameByUserId[detail.debtorUserId] = detail.debtorName;
+      }
+      if (detail.creditorUserId.isNotEmpty) {
+        nameByUserId[detail.creditorUserId] = detail.creditorName;
+      }
+    }
+
+    final minimizedTransfers = computeMinimumSettlements(
+      obligations: details
+          .map(
+            (detail) => SettlementTransfer(
+              payerUserId: detail.debtorUserId,
+              payeeUserId: detail.creditorUserId,
+              amountCents: detail.amountCents,
+            ),
+          )
+          .toList(),
+    );
+
     final map = <String, _SettleUpSummary>{};
 
-    for (final tx in transactions) {
-      final detail = tx.settlementDetails;
-      if (detail == null) {
-        continue;
-      }
-
-      final isCurrentDebtor = detail.debtorUserId == currentUserId;
-      final isCurrentCreditor = detail.creditorUserId == currentUserId;
+    for (final transfer in minimizedTransfers) {
+      final isCurrentDebtor = transfer.payerUserId == currentUserId;
+      final isCurrentCreditor = transfer.payeeUserId == currentUserId;
       if (!isCurrentDebtor && !isCurrentCreditor) {
         continue;
       }
 
       final counterpartyUserId =
-          isCurrentDebtor ? detail.creditorUserId : detail.debtorUserId;
-      final counterpartyName = isCurrentDebtor ? detail.creditorName : detail.debtorName;
+          isCurrentDebtor ? transfer.payeeUserId : transfer.payerUserId;
+      final counterpartyName = nameByUserId[counterpartyUserId] ?? 'Member';
+
+      final fromName = nameByUserId[transfer.payerUserId] ?? 'Member';
+      final toName = nameByUserId[transfer.payeeUserId] ?? 'Member';
 
       final summary = map.putIfAbsent(
         counterpartyUserId,
@@ -2459,16 +2485,16 @@ class _GroupsScreenState extends State<GroupsScreen>
 
       summary.ledgerLines.add(
         _CounterpartyLedgerLine(
-          fromName: detail.debtorName,
-          toName: detail.creditorName,
-          amountCents: detail.amountCents,
+          fromName: fromName,
+          toName: toName,
+          amountCents: transfer.amountCents,
         ),
       );
 
       if (isCurrentDebtor) {
-        summary.netCents += detail.amountCents;
+        summary.netCents += transfer.amountCents;
       } else {
-        summary.netCents -= detail.amountCents;
+        summary.netCents -= transfer.amountCents;
       }
     }
 
