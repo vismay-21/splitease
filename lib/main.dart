@@ -8,6 +8,7 @@ import 'screens/home_screen.dart';
 import 'screens/login_screen.dart';
 import 'screens/profile_screen.dart';
 import 'screens/transactions_screen.dart';
+import 'screens/welcome_screen.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -21,10 +22,7 @@ Future<void> main() async {
     );
   }
 
-  await Supabase.initialize(
-    url: supabaseUrl,
-    anonKey: supabaseAnonKey,
-  );
+  await Supabase.initialize(url: supabaseUrl, anonKey: supabaseAnonKey);
 
   runApp(const MyApp());
 }
@@ -44,6 +42,19 @@ class MyApp extends StatelessWidget {
           brightness: Brightness.light,
         ),
         scaffoldBackgroundColor: const Color(0xFFEDF5FB),
+        snackBarTheme: SnackBarThemeData(
+          behavior: SnackBarBehavior.floating,
+          backgroundColor: Color(0xFF4CA3EB),
+          elevation: 10,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
+          contentTextStyle: const TextStyle(
+            color: Color(0xFF17324D),
+            fontWeight: FontWeight.w500,
+          ),
+          insetPadding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+        ),
       ),
       home: const StartupSetupGate(),
     );
@@ -127,9 +138,7 @@ class _StartupSetupGateState extends State<StartupSetupGate> {
     }
 
     if (_isChecking) {
-      return const Scaffold(
-        body: Center(child: CircularProgressIndicator()),
-      );
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
 
     if (_missingTables.isEmpty && _checkError == null) {
@@ -162,8 +171,8 @@ class _StartupSetupGateState extends State<StartupSetupGate> {
                     'Backend Setup Required',
                     textAlign: TextAlign.center,
                     style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                          fontWeight: FontWeight.w700,
-                        ),
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
                   const SizedBox(height: 10),
                   Text(
@@ -179,8 +188,8 @@ class _StartupSetupGateState extends State<StartupSetupGate> {
                       'Missing: ${_missingTables.join(', ')}',
                       textAlign: TextAlign.center,
                       style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                            fontWeight: FontWeight.w600,
-                          ),
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
                   ],
                   if (_checkError != null) ...[
@@ -253,9 +262,36 @@ class AuthGate extends StatelessWidget {
           return const MainNavPage();
         }
 
-        return const LoginScreen();
+        return const SignedOutFlow();
       },
     );
+  }
+}
+
+class SignedOutFlow extends StatefulWidget {
+  const SignedOutFlow({super.key});
+
+  @override
+  State<SignedOutFlow> createState() => _SignedOutFlowState();
+}
+
+class _SignedOutFlowState extends State<SignedOutFlow> {
+  bool _showWelcome = true;
+
+  @override
+  Widget build(BuildContext context) {
+    if (_showWelcome) {
+      return WelcomeScreen(
+        nextPage: const LoginScreen(),
+        onGetStarted: () {
+          setState(() {
+            _showWelcome = false;
+          });
+        },
+      );
+    }
+
+    return const LoginScreen();
   }
 }
 
@@ -269,7 +305,6 @@ class MainNavPage extends StatefulWidget {
 class _MainNavPageState extends State<MainNavPage> {
   final PageController _pageController = PageController();
   int _selectedIndex = 0;
-
 
   static final List<Widget> _pages = [
     const HomeScreen(),
@@ -311,15 +346,6 @@ class _MainNavPageState extends State<MainNavPage> {
         },
         children: _pages,
       ),
-      floatingActionButton: _selectedIndex == 0
-          ? FloatingActionButton(
-              onPressed: () {},
-              backgroundColor: Colors.black,
-              tooltip: 'Add expense',
-              child: const Icon(Icons.add, color: Colors.white),
-            )
-          : null,
-      floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
       bottomNavigationBar: Padding(
         padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
         child: ClipRRect(

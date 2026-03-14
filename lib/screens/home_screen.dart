@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import 'notifications_screen.dart';
+
 class HomeScreen extends StatelessWidget {
   const HomeScreen({super.key});
 
@@ -8,16 +10,12 @@ class HomeScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-
     return Container(
       decoration: const BoxDecoration(
         gradient: LinearGradient(
           begin: Alignment.topCenter,
           end: Alignment.bottomCenter,
-          colors: [
-            Color(0xFFE9F4FF),
-            Color(0xFFF1F8FF),
-          ],
+          colors: [Color(0xFFE9F4FF), Color(0xFFF1F8FF)],
         ),
       ),
       child: SafeArea(
@@ -31,20 +29,48 @@ class HomeScreen extends StatelessWidget {
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
+                    Row(
+                      children: [
+                        CircleAvatar(
+                          radius: 22,
+                          backgroundColor: _primaryBlue.withAlpha(46),
+                          child: Icon(
+                            Icons.person,
+                            color: _primaryBlue,
+                            size: 24,
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Text(
+                          'SplitEase',
+                          style: Theme.of(context).textTheme.titleMedium
+                              ?.copyWith(
+                                fontSize: 24,
+                                fontWeight: FontWeight.w800,
+                                color: const Color(0xFF17324D),
+                                letterSpacing: 0.2,
+                              ),
+                        ),
+                      ],
+                    ),
                     CircleAvatar(
                       radius: 22,
                       backgroundColor: _primaryBlue.withAlpha(46),
-                      child: Icon(
-                        Icons.person,
-                        color: _primaryBlue,
-                        size: 24,
+                      child: IconButton(
+                        onPressed: () {
+                          Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (context) => const NotificationsScreen(),
+                            ),
+                          );
+                        },
+                        icon: Icon(
+                          Icons.notifications_none,
+                          color: _primaryBlue,
+                          size: 24,
+                        ),
+                        tooltip: 'Notifications',
                       ),
-                    ),
-                    IconButton(
-                      onPressed: () {},
-                      icon: const Icon(Icons.notifications_none),
-                      color: Colors.white,
-                      tooltip: 'Notifications',
                     ),
                   ],
                 ),
@@ -53,7 +79,7 @@ class HomeScreen extends StatelessWidget {
                   children: [
                     Expanded(
                       child: _OweCard(
-                        title: 'You owe',
+                        title: 'To Pay',
                         amount: '-250.50',
                         amountColor: Colors.red,
                         icon: Icons.arrow_upward,
@@ -63,7 +89,7 @@ class HomeScreen extends StatelessWidget {
                     const SizedBox(width: 12),
                     Expanded(
                       child: _OweCard(
-                        title: 'Owed to you',
+                        title: 'To Receive',
                         amount: '+280.75',
                         amountColor: Colors.green,
                         icon: Icons.arrow_downward,
@@ -80,10 +106,9 @@ class HomeScreen extends StatelessWidget {
                   children: [
                     Text(
                       'Recent transactions',
-                      style: Theme.of(context)
-                          .textTheme
-                          .titleMedium
-                          ?.copyWith(fontWeight: FontWeight.w700),
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w700,
+                      ),
                     ),
                     TextButton(
                       onPressed: () {},
@@ -167,18 +192,14 @@ class _OweCard extends StatelessWidget {
                   color: amountColor.withAlpha(41),
                   borderRadius: BorderRadius.circular(12),
                 ),
-                child: Icon(
-                  icon,
-                  size: 20,
-                  color: amountColor,
-                ),
+                child: Icon(icon, size: 20, color: amountColor),
               ),
               const SizedBox(width: 10),
               Text(
                 title,
-                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                      fontWeight: FontWeight.w600,
-                    ),
+                style: Theme.of(
+                  context,
+                ).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
               ),
             ],
           ),
@@ -186,9 +207,9 @@ class _OweCard extends StatelessWidget {
           Text(
             amount,
             style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                  color: amountColor,
-                  fontWeight: FontWeight.w700,
-                ),
+              color: amountColor,
+              fontWeight: FontWeight.w700,
+            ),
           ),
         ],
       ),
@@ -223,9 +244,9 @@ class _GroupBar extends StatelessWidget {
           Text(
             'Groups',
             style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                  fontWeight: FontWeight.w700,
-                  color: Colors.black87,
-                ),
+              fontWeight: FontWeight.w700,
+              color: Colors.black87,
+            ),
           ),
           const SizedBox(width: 14),
           Expanded(
@@ -242,9 +263,7 @@ class _GroupBar extends StatelessWidget {
                       decoration: BoxDecoration(
                         color: Colors.white,
                         borderRadius: BorderRadius.circular(18),
-                        border: Border.all(
-                          color: Colors.black.withAlpha(31),
-                        ),
+                        border: Border.all(color: Colors.black.withAlpha(31)),
                       ),
                       child: Center(
                         child: Icon(
@@ -301,11 +320,7 @@ class _TransactionTile extends StatelessWidget {
                     color: Colors.black.withAlpha(13),
                     borderRadius: BorderRadius.circular(14),
                   ),
-                  child: Icon(
-                    icon,
-                    color: Colors.black87,
-                    size: 22,
-                  ),
+                  child: Icon(icon, color: Colors.black87, size: 22),
                 ),
                 const SizedBox(width: 14),
                 Expanded(
@@ -315,16 +330,15 @@ class _TransactionTile extends StatelessWidget {
                       Text(
                         title,
                         style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                              fontWeight: FontWeight.w700,
-                            ),
+                          fontWeight: FontWeight.w700,
+                        ),
                       ),
                       const SizedBox(height: 2),
                       Text(
                         subtitle,
-                        style: Theme.of(context)
-                            .textTheme
-                            .bodySmall
-                            ?.copyWith(color: Colors.black54),
+                        style: Theme.of(
+                          context,
+                        ).textTheme.bodySmall?.copyWith(color: Colors.black54),
                       ),
                     ],
                   ),
@@ -332,9 +346,9 @@ class _TransactionTile extends StatelessWidget {
                 Text(
                   amount,
                   style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        color: amountColor,
-                        fontWeight: FontWeight.w700,
-                      ),
+                    color: amountColor,
+                    fontWeight: FontWeight.w700,
+                  ),
                 ),
               ],
             ),
