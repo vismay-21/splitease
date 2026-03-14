@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import 'notifications_screen.dart';
+
 class HomeScreen extends StatelessWidget {
   const HomeScreen({super.key});
 
@@ -55,7 +57,13 @@ class HomeScreen extends StatelessWidget {
                       radius: 22,
                       backgroundColor: _primaryBlue.withAlpha(46),
                       child: IconButton(
-                        onPressed: () {},
+                        onPressed: () {
+                          Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (context) => const NotificationsScreen(),
+                            ),
+                          );
+                        },
                         icon: Icon(
                           Icons.notifications_none,
                           color: _primaryBlue,
