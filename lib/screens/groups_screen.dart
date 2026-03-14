@@ -583,16 +583,174 @@ class _GroupsScreenState extends State<GroupsScreen>
         )
         .toList();
 
+    final nameByUserId = <String, String>{
+      for (final member in memberBalances) member.userId: member.memberName,
+    };
+    final splitRows = await _client
+        .from('group_settlements')
+        .select('payer_user_id,receiver_user_id,amount,method,status')
+        .eq('group_id', group.id)
+        .eq('method', 'split')
+        .eq('status', 'pending') as List<dynamic>;
+
+    final splitSettlementTransactions = splitRows
+        .map((row) {
+          final debtorUserId = row['payer_user_id']?.toString() ?? '';
+          final creditorUserId = row['receiver_user_id']?.toString() ?? '';
+          final amount = _asDouble(row['amount']);
+          if (debtorUserId.isEmpty || creditorUserId.isEmpty || amount <= 0) {
+            return null;
+          }
+
+          final debtorName = nameByUserId[debtorUserId] ?? 'Member';
+          final creditorName = nameByUserId[creditorUserId] ?? 'Member';
+          final isCredit = creditorUserId == _currentUser?.id;
+
+          return _GroupTransaction(
+            date: _formatDate(DateTime.now()).split(',').first,
+            title: '$debtorName pays $creditorName',
+            subtitle: 'Saved split',
+            amount: amount,
+            isCredit: isCredit,
+            icon: Icons.swap_horiz,
+            settlementDetails: _SettlementTransactionDetails(
+              debtorUserId: debtorUserId,
+              debtorName: debtorName,
+              creditorUserId: creditorUserId,
+              creditorName: creditorName,
+              amountCents: (amount * 100).round(),
+            ),
+          );
+        })
+        .whereType<_GroupTransaction>()
+        .toList();
+
     final weekly = _sumSince(expenses, DateTime.now().subtract(const Duration(days: 7)));
     final monthly = _sumSince(expenses, DateTime.now().subtract(const Duration(days: 30)));
 
     return GroupDetailsData(
       members: memberBalances,
       expenses: expenses,
+      splitSettlementTransactions: splitSettlementTransactions,
       weeklySpending: weekly,
       monthlySpending: monthly,
-      totalTransactions: expenses.length,
+      totalTransactions: expenses.length + splitSettlementTransactions.length,
     );
+  }
+
+  List<_GroupTransaction> _buildExpenseTransactionsFromDb(List<GroupExpense> expenses) {
+    return expenses
+        .map(
+          (expense) => _GroupTransaction(
+            date: _formatDate(expense.date).split(',').first,
+            title: expense.description,
+            subtitle: 'Paid by ${expense.paidBy}',
+            amount: expense.amount,
+            isCredit: false,
+            icon: Icons.receipt_long,
+            expenseDetails: _ExpenseTransactionDetails(
+              expenseName: expense.description,
+              totalAmount: expense.amount,
+              paidBy: <_PaidByLine>[
+                _PaidByLine(memberName: expense.paidBy, amount: expense.amount),
+              ],
+              participants: <String>[],
+            ),
+          ),
+        )
+        .toList();
+  }
+
+  Future<bool> _persistExpenseSplit({
+    required GroupSummary group,
+    required String expenseName,
+    required List<_MemberOption> members,
+    required Map<String, double> paidByUserId,
+    required List<_GroupTransaction> computedTransactions,
+  }) async {
+    final user = _currentUser;
+    if (user == null) {
+      _showMessage('Please sign in again.');
+      return false;
+    }
+
+    final totalAmount = paidByUserId.values.fold<double>(0, (sum, value) => sum + value);
+    if (totalAmount <= 0) {
+      _showMessage('Total paid amount must be greater than zero.');
+      return false;
+    }
+
+    final paidMembers = members
+        .where((member) => (paidByUserId[member.userId] ?? 0) > 0)
+        .map((member) => member.displayName)
+        .toList();
+
+    final paidByName = paidMembers.isEmpty
+        ? 'Unknown'
+        : paidMembers.length == 1
+            ? paidMembers.first
+            : 'Multiple members';
+
+    final splitLines = computedTransactions
+        .map((tx) => tx.settlementDetails)
+        .whereType<_SettlementTransactionDetails>()
+        .map(
+          (detail) => '${detail.debtorName} pays ${detail.creditorName} ${_money(detail.amountCents / 100)}',
+        )
+        .toList();
+
+    final owesSummary = splitLines.isEmpty ? 'No split' : splitLines.join(' | ');
+
+    String paidByUserIdForRow = user.id;
+    var maxPaid = -1.0;
+    for (final entry in paidByUserId.entries) {
+      if (entry.value > maxPaid) {
+        maxPaid = entry.value;
+        paidByUserIdForRow = entry.key;
+      }
+    }
+
+    final hasPaidByUser = members.any((member) => member.userId == paidByUserIdForRow);
+    if (!hasPaidByUser) {
+      paidByUserIdForRow = user.id;
+    }
+
+    final splitRows = computedTransactions
+        .map((tx) => tx.settlementDetails)
+        .whereType<_SettlementTransactionDetails>()
+        .map(
+          (detail) => <String, dynamic>{
+            'debtor_user_id': detail.debtorUserId,
+            'creditor_user_id': detail.creditorUserId,
+            'amount': detail.amountCents / 100,
+          },
+        )
+        .toList();
+
+    try {
+      await _client.rpc(
+        'create_group_expense_with_splits',
+        params: {
+          '_group_id': group.id,
+          '_description': expenseName,
+          '_amount': totalAmount,
+          '_paid_by_user_id': paidByUserIdForRow,
+          '_paid_by_name': paidByName,
+          '_owes_summary': owesSummary,
+          '_split_rows': splitRows,
+        },
+      );
+
+      return true;
+    } on PostgrestException catch (error) {
+      _showMessage(
+        'Could not save expense (${error.message}). Run latest Supabase migration.',
+      );
+      return false;
+    } catch (_) {
+      _showMessage('Unable to save expense right now.');
+      return false;
+    }
   }
 
   Future<String?> _fetchMemberUpiId(String groupId, String userId) async {
@@ -737,6 +895,17 @@ class _GroupsScreenState extends State<GroupsScreen>
   Future<void> _openGroupDetailPopup(GroupSummary group) async {
     final youOwe = group.balance < 0 ? -group.balance : 0.0;
     final youAreOwed = group.balance > 0 ? group.balance : 0.0;
+    List<_GroupTransaction> persistedTransactions = <_GroupTransaction>[];
+
+    try {
+      final details = await _fetchGroupDetails(group);
+      persistedTransactions = <_GroupTransaction>[
+        ..._buildExpenseTransactionsFromDb(details.expenses),
+        ...details.splitSettlementTransactions,
+      ];
+    } catch (_) {
+      // Group popup will still open with current-session transactions.
+    }
 
     await showDialog<void>(
       context: context,
@@ -745,7 +914,7 @@ class _GroupsScreenState extends State<GroupsScreen>
         final maxWidth = MediaQuery.of(context).size.width * 0.92;
         final createdDate = _formatDate(group.createdAt);
         var transactions = List<_GroupTransaction>.from(
-          _groupPreviewTransactions[group.id] ?? _fakeTransactions,
+          _groupPreviewTransactions[group.id] ?? persistedTransactions,
         );
         var selectedSection = 'transactions';
 
@@ -1841,7 +2010,7 @@ class _GroupsScreenState extends State<GroupsScreen>
                             ),
                             const Spacer(),
                             FilledButton(
-                              onPressed: () {
+                              onPressed: () async {
                                 final expenseName = expenseNameController.text.trim();
                                 if (expenseName.isEmpty) {
                                   _showMessage('Expense name is required.');
@@ -1873,9 +2042,24 @@ class _GroupsScreenState extends State<GroupsScreen>
                                   currentUserId: _currentUser?.id,
                                 );
 
+                                final saved = await _persistExpenseSplit(
+                                  group: group,
+                                  expenseName: expenseName,
+                                  members: members,
+                                  paidByUserId: paidByUserId,
+                                  computedTransactions: settlements,
+                                );
+                                if (!saved) {
+                                  return;
+                                }
+
                                 onPreviewGenerated?.call(settlements);
+                                if (!mounted) {
+                                  return;
+                                }
                                 Navigator.of(context).pop();
-                                _showMessage('Expense split preview generated.');
+                                _showMessage('Expense saved and split generated.');
+                                await _loadData();
                               },
                               child: const Text('Continue'),
                             ),
@@ -4288,6 +4472,7 @@ class GroupDetailsData {
   GroupDetailsData({
     required this.members,
     required this.expenses,
+    required this.splitSettlementTransactions,
     required this.weeklySpending,
     required this.monthlySpending,
     required this.totalTransactions,
@@ -4295,6 +4480,7 @@ class GroupDetailsData {
 
   final List<GroupMemberBalance> members;
   final List<GroupExpense> expenses;
+  final List<_GroupTransaction> splitSettlementTransactions;
   final double weeklySpending;
   final double monthlySpending;
   final int totalTransactions;
