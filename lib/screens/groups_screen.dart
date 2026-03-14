@@ -37,6 +37,7 @@ final _fakeGroups = [
 
 class _GroupTransaction {
   const _GroupTransaction({
+    required this.sortKey,
     required this.date,
     required this.title,
     required this.subtitle,
@@ -47,6 +48,7 @@ class _GroupTransaction {
     this.settlementDetails,
   });
 
+  final DateTime sortKey;
   final String date;
   final String title;
   final String subtitle;
@@ -99,11 +101,13 @@ class _CounterpartyLedgerLine {
     required this.fromName,
     required this.toName,
     required this.amountCents,
+    required this.occurredAt,
   });
 
   final String fromName;
   final String toName;
   final int amountCents;
+  final DateTime occurredAt;
 }
 
 class _SettleUpSummary {
@@ -112,12 +116,23 @@ class _SettleUpSummary {
     required this.counterpartyName,
     required this.netCents,
     required this.ledgerLines,
+    required this.latestActivityAt,
   });
 
   final String counterpartyUserId;
   final String counterpartyName;
   int netCents;
   final List<_CounterpartyLedgerLine> ledgerLines;
+  DateTime latestActivityAt;
+}
+
+enum _PaymentApprovalStatus { pending, confirmed, denied }
+
+class GroupSettleUpIntent {
+  const GroupSettleUpIntent({required this.groupId, required this.counterpartyUserId});
+
+  final String groupId;
+  final String counterpartyUserId;
 }
 
 class _SettleMember {
@@ -132,8 +147,9 @@ class _SettleMember {
   final String? upiId;
 }
 
-const _fakeTransactions = [
+final _fakeTransactions = [
   _GroupTransaction(
+    sortKey: DateTime.utc(2026, 4, 4, 9, 0),
     date: 'Apr 04',
     title: 'Grocery',
     subtitle: 'You paid',
@@ -142,6 +158,7 @@ const _fakeTransactions = [
     icon: Icons.shopping_bag_outlined,
   ),
   _GroupTransaction(
+    sortKey: DateTime.utc(2026, 5, 2, 9, 0),
     date: 'May 02',
     title: 'Train refund price',
     subtitle: 'You lent',
@@ -150,6 +167,7 @@ const _fakeTransactions = [
     icon: Icons.train,
   ),
   _GroupTransaction(
+    sortKey: DateTime.utc(2026, 5, 11, 9, 0),
     date: 'May 11',
     title: 'Dinner',
     subtitle: 'You paid',
@@ -158,6 +176,7 @@ const _fakeTransactions = [
     icon: Icons.restaurant_outlined,
   ),
   _GroupTransaction(
+    sortKey: DateTime.utc(2026, 5, 23, 9, 0),
     date: 'May 23',
     title: 'Taxi share',
     subtitle: 'You paid',
@@ -166,6 +185,7 @@ const _fakeTransactions = [
     icon: Icons.directions_car_outlined,
   ),
   _GroupTransaction(
+    sortKey: DateTime.utc(2026, 6, 1, 9, 0),
     date: 'Jun 01',
     title: 'Movie night',
     subtitle: 'You lent',
@@ -177,6 +197,24 @@ const _fakeTransactions = [
 
 class GroupsScreen extends StatefulWidget {
   const GroupsScreen({super.key});
+
+  static GroupSettleUpIntent? _pendingSettleUpIntent;
+
+  static void setPendingSettleUpIntent({
+    required String groupId,
+    required String counterpartyUserId,
+  }) {
+    _pendingSettleUpIntent = GroupSettleUpIntent(
+      groupId: groupId,
+      counterpartyUserId: counterpartyUserId,
+    );
+  }
+
+  static GroupSettleUpIntent? takePendingSettleUpIntent() {
+    final intent = _pendingSettleUpIntent;
+    _pendingSettleUpIntent = null;
+    return intent;
+  }
 
   @override
   State<GroupsScreen> createState() => _GroupsScreenState();
@@ -331,6 +369,8 @@ class _GroupsScreenState extends State<GroupsScreen>
         _cachedGroups = List<GroupSummary>.from(_groups);
         _cachedInvitations = List<GroupInvitation>.from(_pendingInvitations);
       });
+
+      _tryOpenPendingSettleUpIntent(groups);
     } on PostgrestException catch (error) {
       if (!mounted) {
         return;
@@ -352,6 +392,37 @@ class _GroupsScreenState extends State<GroupsScreen>
         _loadError = 'Unable to load groups right now.';
       });
     }
+  }
+
+  void _tryOpenPendingSettleUpIntent(List<GroupSummary> groups) {
+    final intent = GroupsScreen.takePendingSettleUpIntent();
+    if (intent == null) {
+      return;
+    }
+
+    GroupSummary? targetGroup;
+    for (final group in groups) {
+      if (group.id == intent.groupId) {
+        targetGroup = group;
+        break;
+      }
+    }
+
+    if (targetGroup == null) {
+      _showMessage('Requested group not found.');
+      return;
+    }
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+      _openGroupDetailPopup(
+        targetGroup!,
+        initialSection: 'settleup',
+        focusCounterpartyUserId: intent.counterpartyUserId,
+      );
+    });
   }
 
   Future<List<GroupSummary>> _fetchGroupsForUser(String userId) async {
@@ -568,9 +639,9 @@ class _GroupsScreenState extends State<GroupsScreen>
 
     final expenseRows = await _client
         .from('group_expenses')
-        .select('description,amount,paid_by_name,expense_date,owes_summary,bill_image_url')
+      .select('description,amount,paid_by_name,expense_date,owes_summary,bill_image_url,created_at')
         .eq('group_id', group.id)
-        .order('expense_date', ascending: false) as List<dynamic>;
+      .order('created_at', ascending: false) as List<dynamic>;
 
     final expenses = expenseRows
         .map(
@@ -579,6 +650,10 @@ class _GroupsScreenState extends State<GroupsScreen>
             amount: _asDouble(row['amount']),
             paidBy: row['paid_by_name']?.toString() ?? 'Unknown',
             date: DateTime.tryParse(row['expense_date']?.toString() ?? '') ?? DateTime.now(),
+            createdAt:
+                DateTime.tryParse(row['created_at']?.toString() ?? '')?.toLocal() ??
+                DateTime.tryParse(row['expense_date']?.toString() ?? '') ??
+                DateTime.now(),
             owesWhom: row['owes_summary']?.toString() ?? 'Split equally',
             billImageUrl: row['bill_image_url']?.toString(),
           ),
@@ -590,10 +665,11 @@ class _GroupsScreenState extends State<GroupsScreen>
     };
     final splitRows = await _client
         .from('group_settlements')
-        .select('payer_user_id,receiver_user_id,amount,method,status')
+      .select('payer_user_id,receiver_user_id,amount,method,status,created_at')
         .eq('group_id', group.id)
         .eq('method', 'split')
-        .eq('status', 'pending') as List<dynamic>;
+      .eq('status', 'pending')
+      .order('created_at', ascending: false) as List<dynamic>;
 
     final splitSettlementTransactions = splitRows
         .map((row) {
@@ -607,9 +683,13 @@ class _GroupsScreenState extends State<GroupsScreen>
           final debtorName = nameByUserId[debtorUserId] ?? 'Member';
           final creditorName = nameByUserId[creditorUserId] ?? 'Member';
           final isCredit = creditorUserId == _currentUser?.id;
+          final createdAt =
+              DateTime.tryParse(row['created_at']?.toString() ?? '')?.toLocal() ??
+              DateTime.now();
 
           return _GroupTransaction(
-            date: _formatDate(DateTime.now()).split(',').first,
+            sortKey: createdAt,
+            date: _formatDate(createdAt).split(',').first,
             title: '$debtorName pays $creditorName',
             subtitle: 'Saved split',
             amount: amount,
@@ -644,7 +724,8 @@ class _GroupsScreenState extends State<GroupsScreen>
     return expenses
         .map(
           (expense) => _GroupTransaction(
-            date: _formatDate(expense.date).split(',').first,
+            sortKey: expense.createdAt,
+            date: _formatDate(expense.createdAt).split(',').first,
             title: expense.description,
             subtitle: 'Paid by ${expense.paidBy}',
             amount: expense.amount,
@@ -661,6 +742,14 @@ class _GroupsScreenState extends State<GroupsScreen>
           ),
         )
         .toList();
+  }
+
+  List<_GroupTransaction> _sortTransactionsNewestFirst(
+    Iterable<_GroupTransaction> entries,
+  ) {
+    final sorted = List<_GroupTransaction>.from(entries);
+    sorted.sort((a, b) => b.sortKey.compareTo(a.sortKey));
+    return sorted;
   }
 
   Future<bool> _persistExpenseSplit({
@@ -775,6 +864,154 @@ class _GroupsScreenState extends State<GroupsScreen>
       return upiId;
     } catch (_) {
       return null;
+    }
+  }
+
+  Future<void> _sendPaymentConfirmationNotification({
+    required String groupId,
+    required String receiverUserId,
+    required String receiverName,
+    required double amount,
+    required String method,
+  }) async {
+    final user = _currentUser;
+    if (user == null || receiverUserId.isEmpty) {
+      return;
+    }
+
+    final senderName = _currentUserPreferredName(user);
+    final normalizedMethod = method.toLowerCase() == 'cash' ? 'cash' : 'upi';
+
+    try {
+      await _client.from('group_notifications').insert({
+        'group_id': groupId,
+        'sender_user_id': user.id,
+        'sender_name': senderName,
+        'receiver_user_id': receiverUserId,
+        'receiver_name': receiverName,
+        'category': 'payment_received_confirmation',
+        'method': normalizedMethod,
+        'amount': amount,
+        'status': 'pending',
+      });
+    } catch (_) {
+      // Keep payment flow uninterrupted if notification insertion fails.
+    }
+  }
+
+  Future<bool> _sendPaymentRequestNotification({
+    required String groupId,
+    required String receiverUserId,
+    required String receiverName,
+    required double amount,
+  }) async {
+    final user = _currentUser;
+    if (user == null || receiverUserId.isEmpty) {
+      return false;
+    }
+
+    final senderName = _currentUserPreferredName(user);
+
+    try {
+      await _client.from('group_notifications').insert({
+        'group_id': groupId,
+        'sender_user_id': user.id,
+        'sender_name': senderName,
+        'receiver_user_id': receiverUserId,
+        'receiver_name': receiverName,
+        'category': 'payment_request',
+        'method': 'request',
+        'amount': amount,
+        'status': 'pending',
+      });
+      return true;
+    } catch (_) {
+      // Keep UI responsive even if notification insert fails.
+      return false;
+    }
+  }
+
+  Future<Set<String>> _fetchPendingOutgoingPaymentRequests({
+    required String groupId,
+    required String senderUserId,
+  }) async {
+    if (groupId.isEmpty || senderUserId.isEmpty) {
+      return <String>{};
+    }
+
+    try {
+      final rows = await _client
+          .from('group_notifications')
+          .select('sender_user_id,receiver_user_id,status,created_at')
+          .eq('group_id', groupId)
+          .eq('category', 'payment_request')
+          .eq('sender_user_id', senderUserId)
+          .order('created_at', ascending: false) as List<dynamic>;
+
+      final latestStatusByPair = <String, String>{};
+      for (final row in rows) {
+        final senderId = row['sender_user_id']?.toString() ?? '';
+        final receiverId = row['receiver_user_id']?.toString() ?? '';
+        final status = row['status']?.toString().toLowerCase() ?? 'pending';
+        if (senderId.isEmpty || receiverId.isEmpty) {
+          continue;
+        }
+
+        final key = '$senderId|$receiverId';
+        if (latestStatusByPair.containsKey(key)) {
+          continue;
+        }
+        latestStatusByPair[key] = status;
+      }
+
+      return latestStatusByPair.entries
+          .where((entry) => entry.value == 'pending')
+          .map((entry) => entry.key)
+          .toSet();
+    } catch (_) {
+      return <String>{};
+    }
+  }
+
+  Future<Map<String, _PaymentApprovalStatus>> _fetchLatestPaymentApprovals(
+    String groupId,
+  ) async {
+    if (groupId.isEmpty) {
+      return <String, _PaymentApprovalStatus>{};
+    }
+
+    try {
+      final rows = await _client
+          .from('group_notifications')
+          .select('sender_user_id,receiver_user_id,status,created_at')
+          .eq('group_id', groupId)
+          .eq('category', 'payment_received_confirmation')
+          .order('created_at', ascending: false) as List<dynamic>;
+
+      final approvals = <String, _PaymentApprovalStatus>{};
+      for (final row in rows) {
+        final senderUserId = row['sender_user_id']?.toString() ?? '';
+        final receiverUserId = row['receiver_user_id']?.toString() ?? '';
+        final status = row['status']?.toString().toLowerCase() ?? 'pending';
+        if (senderUserId.isEmpty || receiverUserId.isEmpty) {
+          continue;
+        }
+
+        final key = '$senderUserId|$receiverUserId';
+        if (approvals.containsKey(key)) {
+          continue;
+        }
+
+        approvals[key] = switch (status) {
+          'confirmed' => _PaymentApprovalStatus.confirmed,
+          'denied' => _PaymentApprovalStatus.denied,
+          _ => _PaymentApprovalStatus.pending,
+        };
+      }
+
+      return approvals;
+    } catch (_) {
+      return <String, _PaymentApprovalStatus>{};
     }
   }
 
@@ -894,10 +1131,17 @@ class _GroupsScreenState extends State<GroupsScreen>
     );
   }
 
-  Future<void> _openGroupDetailPopup(GroupSummary group) async {
+  Future<void> _openGroupDetailPopup(
+    GroupSummary group, {
+    String initialSection = 'transactions',
+    String? focusCounterpartyUserId,
+  }) async {
     final youOwe = group.balance < 0 ? -group.balance : 0.0;
     final youAreOwed = group.balance > 0 ? group.balance : 0.0;
     List<_GroupTransaction> persistedTransactions = <_GroupTransaction>[];
+    var approvalByPair = <String, _PaymentApprovalStatus>{};
+    var pendingRequestPairs = <String>{};
+    final currentUserId = _currentUser?.id;
 
     try {
       final details = await _fetchGroupDetails(group);
@@ -909,6 +1153,14 @@ class _GroupsScreenState extends State<GroupsScreen>
       // Group popup will still open with current-session transactions.
     }
 
+    approvalByPair = await _fetchLatestPaymentApprovals(group.id);
+    if (currentUserId != null) {
+      pendingRequestPairs = await _fetchPendingOutgoingPaymentRequests(
+        groupId: group.id,
+        senderUserId: currentUserId,
+      );
+    }
+
     await showDialog<void>(
       context: context,
       builder: (context) {
@@ -916,10 +1168,10 @@ class _GroupsScreenState extends State<GroupsScreen>
         final maxWidth = MediaQuery.of(context).size.width * 0.92;
         final createdDate = _formatDate(group.createdAt);
         final localPreview = _groupPreviewTransactions[group.id] ?? <_GroupTransaction>[];
-        var transactions = List<_GroupTransaction>.from(
+        var transactions = _sortTransactionsNewestFirst(
           persistedTransactions.isNotEmpty ? persistedTransactions : localPreview,
         );
-        var selectedSection = 'transactions';
+        var selectedSection = initialSection;
 
         return StatefulBuilder(
           builder: (context, setModalState) {
@@ -1168,7 +1420,28 @@ class _GroupsScreenState extends State<GroupsScreen>
                                 );
                               }
 
-                              return _buildInlineSettleUpSection(group, transactions);
+                              return _buildInlineSettleUpSection(
+                                group,
+                                transactions,
+                                approvalByPair: approvalByPair,
+                                pendingRequestPairs: pendingRequestPairs,
+                                focusCounterpartyUserId: focusCounterpartyUserId,
+                                onApprovalStatusChanged: (payerUserId, payeeUserId, status) {
+                                  setModalState(() {
+                                    approvalByPair['$payerUserId|$payeeUserId'] = status;
+                                  });
+                                },
+                                onRequestStatusChanged: (senderUserId, receiverUserId, isPending) {
+                                  setModalState(() {
+                                    final key = '$senderUserId|$receiverUserId';
+                                    if (isPending) {
+                                      pendingRequestPairs.add(key);
+                                    } else {
+                                      pendingRequestPairs.remove(key);
+                                    }
+                                  });
+                                },
+                              );
                             },
                           ),
                         ],
@@ -1187,10 +1460,10 @@ class _GroupsScreenState extends State<GroupsScreen>
                             group,
                             onPreviewGenerated: (computedTransactions) {
                               final existing = transactions;
-                              final merged = <_GroupTransaction>[
+                              final merged = _sortTransactionsNewestFirst(<_GroupTransaction>[
                                 ...computedTransactions,
                                 ...existing,
-                              ];
+                              ]);
 
                               setState(() {
                                 _groupPreviewTransactions[group.id] = merged;
@@ -1293,10 +1566,10 @@ class _GroupsScreenState extends State<GroupsScreen>
                                 final amount = member.balance.abs();
                                 final amountLabel = _money(amount);
                                 final subtitle = owesMe
-                                    ? 'Owes you'
-                                    : iOwe
-                                        ? 'You owe'
-                                        : 'Settled';
+                                  ? 'To Receive'
+                                  : iOwe
+                                    ? 'To Pay'
+                                    : 'Settled';
 
                                 return Container(
                                   padding: const EdgeInsets.all(14),
@@ -2202,6 +2475,19 @@ class _GroupsScreenState extends State<GroupsScreen>
   Widget _buildInlineSettleUpSection(
     GroupSummary group,
     List<_GroupTransaction> transactions,
+    {
+      required Map<String, _PaymentApprovalStatus> approvalByPair,
+      required Set<String> pendingRequestPairs,
+      String? focusCounterpartyUserId,
+      required void Function(
+        String payerUserId,
+        String payeeUserId,
+        _PaymentApprovalStatus status,
+      )
+      onApprovalStatusChanged,
+      required void Function(String senderUserId, String receiverUserId, bool isPending)
+      onRequestStatusChanged,
+    }
   ) {
     final currentUserId = _currentUser?.id;
     if (currentUserId == null) {
@@ -2212,6 +2498,17 @@ class _GroupsScreenState extends State<GroupsScreen>
       transactions: transactions,
       currentUserId: currentUserId,
     );
+    final orderedSummaries = List<_SettleUpSummary>.from(summaries);
+    if (focusCounterpartyUserId != null && focusCounterpartyUserId.isNotEmpty) {
+      orderedSummaries.sort((a, b) {
+        final aFocused = a.counterpartyUserId == focusCounterpartyUserId;
+        final bFocused = b.counterpartyUserId == focusCounterpartyUserId;
+        if (aFocused == bFocused) {
+          return 0;
+        }
+        return aFocused ? -1 : 1;
+      });
+    }
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
@@ -2232,7 +2529,7 @@ class _GroupsScreenState extends State<GroupsScreen>
                 ),
           ),
           const SizedBox(height: 10),
-          if (summaries.isEmpty)
+          if (orderedSummaries.isEmpty)
             Container(
               width: double.infinity,
               padding: const EdgeInsets.all(12),
@@ -2251,24 +2548,36 @@ class _GroupsScreenState extends State<GroupsScreen>
             ListView.separated(
               shrinkWrap: true,
               physics: const NeverScrollableScrollPhysics(),
-              itemCount: summaries.length,
+              itemCount: orderedSummaries.length,
               separatorBuilder: (context, index) => const SizedBox(height: 10),
               itemBuilder: (context, index) {
-                final summary = summaries[index];
+                final summary = orderedSummaries[index];
                 final iOwe = summary.netCents > 0;
                 final owesMe = summary.netCents < 0;
                 final amount = (summary.netCents.abs()) / 100;
-              final subtitle = owesMe
-                  ? 'Owes you'
+                final payerUserId = iOwe ? currentUserId : summary.counterpartyUserId;
+                final payeeUserId = iOwe ? summary.counterpartyUserId : currentUserId;
+                final approvalKey = '$payerUserId|$payeeUserId';
+                final approvalStatus = approvalByPair[approvalKey];
+                final requestKey = '$currentUserId|${summary.counterpartyUserId}';
+                final isRequestPending = pendingRequestPairs.contains(requestKey);
+                final isPaymentDone = approvalStatus == _PaymentApprovalStatus.confirmed;
+                final isPendingApproval = approvalStatus == _PaymentApprovalStatus.pending;
+                final isApprovalDenied = approvalStatus == _PaymentApprovalStatus.denied;
+                final subtitle = owesMe
+                  ? 'To Receive'
                   : iOwe
-                      ? 'You owe'
-                      : 'Settled';
+                    ? 'To Pay'
+                    : 'Settled';
 
               return Container(
                 padding: const EdgeInsets.all(14),
                 decoration: BoxDecoration(
                   color: Colors.white,
                   borderRadius: BorderRadius.circular(18),
+                  border: summary.counterpartyUserId == focusCounterpartyUserId
+                      ? Border.all(color: const Color(0xFF1A4A8F), width: 1.4)
+                      : null,
                   boxShadow: [
                     BoxShadow(
                       color: Colors.black.withAlpha(10),
@@ -2315,6 +2624,34 @@ class _GroupsScreenState extends State<GroupsScreen>
                                       color: const Color(0xFF5A6E82),
                                     ),
                               ),
+                              if (isPendingApproval) ...[
+                                const SizedBox(height: 3),
+                                Text(
+                                  iOwe ? 'Pending approval' : 'Pending your approval',
+                                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                        color: const Color(0xFFAF7A00),
+                                        fontWeight: FontWeight.w700,
+                                      ),
+                                ),
+                              ] else if (isApprovalDenied) ...[
+                                const SizedBox(height: 3),
+                                Text(
+                                  'Approval denied',
+                                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                        color: const Color(0xFFB33A2E),
+                                        fontWeight: FontWeight.w700,
+                                      ),
+                                ),
+                              ] else if (isPaymentDone) ...[
+                                const SizedBox(height: 3),
+                                Text(
+                                  'Payment done',
+                                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                        color: const Color(0xFF1B7D3A),
+                                        fontWeight: FontWeight.w700,
+                                      ),
+                                ),
+                              ],
                             ],
                           ),
                         ),
@@ -2334,7 +2671,7 @@ class _GroupsScreenState extends State<GroupsScreen>
                     const SizedBox(height: 12),
                     Row(
                       children: [
-                        if (iOwe) ...[
+                        if (iOwe && !isPaymentDone && !isPendingApproval) ...[
                           Expanded(
                             child: FilledButton(
                               onPressed: () async {
@@ -2360,6 +2697,21 @@ class _GroupsScreenState extends State<GroupsScreen>
                                   return;
                                 }
 
+                                if (launched) {
+                                  await _sendPaymentConfirmationNotification(
+                                    groupId: group.id,
+                                    receiverUserId: summary.counterpartyUserId,
+                                    receiverName: summary.counterpartyName,
+                                    amount: amount,
+                                    method: 'upi',
+                                  );
+                                  onApprovalStatusChanged(
+                                    currentUserId,
+                                    summary.counterpartyUserId,
+                                    _PaymentApprovalStatus.pending,
+                                  );
+                                }
+
                                 _showMessage(
                                   launched
                                       ? 'UPI app opened for ${summary.counterpartyName}.'
@@ -2379,8 +2731,22 @@ class _GroupsScreenState extends State<GroupsScreen>
                           const SizedBox(width: 10),
                           Expanded(
                             child: FilledButton(
-                              onPressed: () {
-                                _showMessage('Marked as paid by cash (stub).');
+                              onPressed: () async {
+                                await _sendPaymentConfirmationNotification(
+                                  groupId: group.id,
+                                  receiverUserId: summary.counterpartyUserId,
+                                  receiverName: summary.counterpartyName,
+                                  amount: amount,
+                                  method: 'cash',
+                                );
+                                onApprovalStatusChanged(
+                                  currentUserId,
+                                  summary.counterpartyUserId,
+                                  _PaymentApprovalStatus.pending,
+                                );
+                                _showMessage(
+                                  'Cash payment marked. Confirmation request sent to ${summary.counterpartyName}.',
+                                );
                               },
                               style: FilledButton.styleFrom(
                                 padding: const EdgeInsets.symmetric(vertical: 12),
@@ -2392,20 +2758,71 @@ class _GroupsScreenState extends State<GroupsScreen>
                               ),
                             ),
                           ),
-                        ] else if (owesMe) ...[
+                        ] else if (iOwe && isPendingApproval) ...[
+                          Expanded(
+                            child: OutlinedButton(
+                              onPressed: null,
+                              child: const Text('Pending approval'),
+                            ),
+                          ),
+                        ] else if (iOwe && isPaymentDone) ...[
+                          Expanded(
+                            child: OutlinedButton(
+                              onPressed: null,
+                              child: const Text('Payment done'),
+                            ),
+                          ),
+                        ] else if (owesMe && !isPaymentDone && !isPendingApproval) ...[
                           Expanded(
                             child: FilledButton(
-                              onPressed: () {
-                                _showMessage('Request sent (stub).');
-                              },
+                              onPressed: isRequestPending
+                                  ? null
+                                  : () async {
+                                      final sent = await _sendPaymentRequestNotification(
+                                        groupId: group.id,
+                                        receiverUserId: summary.counterpartyUserId,
+                                        receiverName: summary.counterpartyName,
+                                        amount: amount,
+                                      );
+
+                                      if (sent) {
+                                        onRequestStatusChanged(
+                                          currentUserId,
+                                          summary.counterpartyUserId,
+                                          true,
+                                        );
+                                        _showMessage(
+                                          'Payment request sent to ${summary.counterpartyName}.',
+                                        );
+                                      } else {
+                                        _showMessage('Could not send request right now.');
+                                      }
+                                    },
                               style: FilledButton.styleFrom(
                                 padding: const EdgeInsets.symmetric(vertical: 12),
                                 backgroundColor: const Color(0xFF1A4A8F),
                               ),
-                              child: const Text(
-                                'Request',
-                                style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700),
+                              child: Text(
+                                isRequestPending ? 'Requested' : 'Request',
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.w700,
+                                ),
                               ),
+                            ),
+                          ),
+                        ] else if (owesMe && isPendingApproval) ...[
+                          Expanded(
+                            child: OutlinedButton(
+                              onPressed: null,
+                              child: const Text('Awaiting your action'),
+                            ),
+                          ),
+                        ] else if (owesMe && isPaymentDone) ...[
+                          Expanded(
+                            child: OutlinedButton(
+                              onPressed: null,
+                              child: const Text('Payment done'),
                             ),
                           ),
                         ] else ...[
@@ -2432,7 +2849,10 @@ class _GroupsScreenState extends State<GroupsScreen>
     required List<_GroupTransaction> transactions,
     required String currentUserId,
   }) {
-    final details = transactions
+    final settlementTransactions = transactions
+        .where((tx) => tx.settlementDetails != null)
+        .toList();
+    final details = settlementTransactions
         .map((tx) => tx.settlementDetails)
         .whereType<_SettlementTransactionDetails>()
         .toList();
@@ -2444,6 +2864,24 @@ class _GroupsScreenState extends State<GroupsScreen>
       }
       if (detail.creditorUserId.isNotEmpty) {
         nameByUserId[detail.creditorUserId] = detail.creditorName;
+      }
+    }
+
+    final latestActivityByUserId = <String, DateTime>{};
+    for (final tx in settlementTransactions) {
+      final detail = tx.settlementDetails;
+      if (detail == null) {
+        continue;
+      }
+
+      final debtorLatest = latestActivityByUserId[detail.debtorUserId];
+      if (debtorLatest == null || tx.sortKey.isAfter(debtorLatest)) {
+        latestActivityByUserId[detail.debtorUserId] = tx.sortKey;
+      }
+
+      final creditorLatest = latestActivityByUserId[detail.creditorUserId];
+      if (creditorLatest == null || tx.sortKey.isAfter(creditorLatest)) {
+        latestActivityByUserId[detail.creditorUserId] = tx.sortKey;
       }
     }
 
@@ -2474,6 +2912,8 @@ class _GroupsScreenState extends State<GroupsScreen>
 
       final fromName = nameByUserId[transfer.payerUserId] ?? 'Member';
       final toName = nameByUserId[transfer.payeeUserId] ?? 'Member';
+      final activityAt =
+          latestActivityByUserId[counterpartyUserId] ?? DateTime.fromMillisecondsSinceEpoch(0);
 
       final summary = map.putIfAbsent(
         counterpartyUserId,
@@ -2482,14 +2922,20 @@ class _GroupsScreenState extends State<GroupsScreen>
           counterpartyName: counterpartyName,
           netCents: 0,
           ledgerLines: <_CounterpartyLedgerLine>[],
+          latestActivityAt: activityAt,
         ),
       );
+
+      if (activityAt.isAfter(summary.latestActivityAt)) {
+        summary.latestActivityAt = activityAt;
+      }
 
       summary.ledgerLines.add(
         _CounterpartyLedgerLine(
           fromName: fromName,
           toName: toName,
           amountCents: transfer.amountCents,
+          occurredAt: activityAt,
         ),
       );
 
@@ -2501,7 +2947,13 @@ class _GroupsScreenState extends State<GroupsScreen>
     }
 
     final summaries = map.values.where((item) => item.netCents != 0).toList();
-    summaries.sort((a, b) => b.netCents.abs().compareTo(a.netCents.abs()));
+    summaries.sort((a, b) {
+      final byLatest = b.latestActivityAt.compareTo(a.latestActivityAt);
+      if (byLatest != 0) {
+        return byLatest;
+      }
+      return b.netCents.abs().compareTo(a.netCents.abs());
+    });
     return summaries;
   }
 
@@ -2509,6 +2961,9 @@ class _GroupsScreenState extends State<GroupsScreen>
     await showDialog<void>(
       context: context,
       builder: (context) {
+        final sortedLedgerLines = List<_CounterpartyLedgerLine>.from(summary.ledgerLines)
+          ..sort((a, b) => b.occurredAt.compareTo(a.occurredAt));
+
         return AlertDialog(
           title: Text('Transactions with ${summary.counterpartyName}'),
           content: SizedBox(
@@ -2517,7 +2972,7 @@ class _GroupsScreenState extends State<GroupsScreen>
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  ...summary.ledgerLines.map(
+                  ...sortedLedgerLines.map(
                     (line) => Padding(
                       padding: const EdgeInsets.only(bottom: 8),
                       child: Text(
@@ -2557,6 +3012,7 @@ class _GroupsScreenState extends State<GroupsScreen>
     required String? currentUserId,
   }) {
     int toCents(double value) => (value * 100).round();
+    final now = DateTime.now();
     final selected = members.where((m) => includeMap[m.userId] ?? false).toList();
     if (selected.isEmpty) {
       return <_GroupTransaction>[];
@@ -2628,7 +3084,8 @@ class _GroupsScreenState extends State<GroupsScreen>
 
       results.add(
         _GroupTransaction(
-          date: _formatDate(DateTime.now()).split(',').first,
+          sortKey: now,
+          date: _formatDate(now).split(',').first,
           title: '$debtorName pays $creditorName',
           subtitle: expenseName,
           amount: transfer / 100,
@@ -2656,7 +3113,8 @@ class _GroupsScreenState extends State<GroupsScreen>
     }
 
     final expenseRow = _GroupTransaction(
-      date: _formatDate(DateTime.now()).split(',').first,
+      sortKey: now,
+      date: _formatDate(now).split(',').first,
       title: expenseName,
       subtitle: 'Expense added',
       amount: totalCents / 100,
@@ -3636,10 +4094,10 @@ class _GroupBar extends StatelessWidget {
             ? const Color(0xFF1B7D3A)
             : const Color(0xFF5C6470);
     final String caption = isOwe
-        ? 'You owe'
-        : isOwed
-            ? 'You are owed'
-            : 'Settled up';
+      ? 'To Pay'
+      : isOwed
+        ? 'To Receive'
+        : 'Settled up';
 
     return Material(
       color: Colors.white,
@@ -4484,6 +4942,7 @@ class GroupExpense {
     required this.amount,
     required this.paidBy,
     required this.date,
+    required this.createdAt,
     required this.owesWhom,
     this.billImageUrl,
   });
@@ -4492,6 +4951,7 @@ class GroupExpense {
   final double amount;
   final String paidBy;
   final DateTime date;
+  final DateTime createdAt;
   final String owesWhom;
   final String? billImageUrl;
 }
