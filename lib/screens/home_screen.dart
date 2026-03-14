@@ -40,17 +40,15 @@ class HomeScreen extends StatelessWidget {
                             size: 24,
                           ),
                         ),
-                        const SizedBox(width: 10),
-                        Text(
-                          'SplitEase',
-                          style: Theme.of(context).textTheme.titleMedium
-                              ?.copyWith(
-                                fontSize: 24,
-                                fontWeight: FontWeight.w800,
-                                color: const Color(0xFF17324D),
-                                letterSpacing: 0.2,
-                              ),
-                        ),
+                         const Text(
+                'BATVAARA',
+                style: TextStyle(
+                  fontSize: 25,
+                  fontWeight: FontWeight.w800,
+                  color: Color(0xFF2E5D36),
+                  letterSpacing: 0.4,
+                ),
+              ),
                       ],
                     ),
                     CircleAvatar(
