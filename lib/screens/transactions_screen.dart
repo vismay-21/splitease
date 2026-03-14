@@ -349,6 +349,7 @@ class _TransactionCard extends StatelessWidget {
   }
 }
 
+
 class _DetailRow extends StatelessWidget {
   const _DetailRow({required this.label, required this.value});
 
