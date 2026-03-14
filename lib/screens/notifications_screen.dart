@@ -1,3 +1,5 @@
+import 'dart:ui';
+
 import 'package:flutter/material.dart';
 
 class NotificationsScreen extends StatefulWidget {
@@ -20,6 +22,7 @@ class _NotificationItem {
     required this.category,
     required this.actionLabel1,
     required this.actionLabel2,
+    required this.date,
   });
 
   final String id;
@@ -29,6 +32,7 @@ class _NotificationItem {
   final String category;
   final String actionLabel1;
   final String actionLabel2;
+  final DateTime date;
   _NotificationStatus status = _NotificationStatus.pending;
 }
 
@@ -41,8 +45,8 @@ class _NotificationsSection {
 
 class _NotificationsScreenState extends State<NotificationsScreen> {
   static const _primaryBlue = Color(0xFF4CA3EB);
-  static const _backgroundStart = Color(0xFFE9F4FF);
-  static const _backgroundEnd = Color(0xFFF1F8FF);
+  static const _backgroundStart = Color(0xFFEAF5FA);
+  static const _backgroundEnd = Color(0xFFD1E6F4);
 
   final List<_NotificationsSection> _sections = [
     _NotificationsSection(
@@ -56,6 +60,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
           category: 'payment_confirmation',
           actionLabel1: 'Confirm',
           actionLabel2: 'Deny',
+          date: DateTime(2026, 3, 14, 11, 15),
         ),
         _NotificationItem(
           id: 'pc2',
@@ -65,6 +70,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
           category: 'payment_confirmation',
           actionLabel1: '',
           actionLabel2: '',
+          date: DateTime(2026, 3, 14, 11, 20),
         ),
       ],
     ),
@@ -79,6 +85,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
           category: 'payment_request',
           actionLabel1: 'Settle up',
           actionLabel2: 'Reject',
+          date: DateTime(2026, 3, 14, 10, 45),
         ),
         _NotificationItem(
           id: 'pr2',
@@ -88,6 +95,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
           category: 'payment_request',
           actionLabel1: '',
           actionLabel2: '',
+          date: DateTime(2026, 3, 14, 10, 55),
         ),
       ],
     ),
@@ -102,6 +110,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
           category: 'group_invite',
           actionLabel1: 'Accept',
           actionLabel2: 'Reject',
+          date: DateTime(2026, 3, 14, 9, 50),
         ),
         _NotificationItem(
           id: 'gi2',
@@ -111,6 +120,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
           category: 'group_invite',
           actionLabel1: '',
           actionLabel2: '',
+          date: DateTime(2026, 3, 14, 9, 55),
         ),
       ],
     ),
@@ -171,6 +181,32 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     );
   }
 
+  String _formatDate(DateTime date) {
+    const months = [
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec',
+    ];
+    final month = months[date.month - 1];
+    return '$month ${date.day}';
+  }
+
+  String _formatTime(DateTime date) {
+    final hour = date.hour % 12 == 0 ? 12 : date.hour % 12;
+    final minutes = date.minute.toString().padLeft(2, '0');
+    final suffix = date.hour >= 12 ? 'pm' : 'am';
+    return '$hour:$minutes $suffix';
+  }
+
   Widget _buildActionButtons(_NotificationItem item) {
     final isPending = item.status == _NotificationStatus.pending;
     if (!isPending) {
@@ -229,54 +265,90 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
   Widget _buildNotificationCard(_NotificationItem item) {
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: Colors.white,
+      child: ClipRRect(
         borderRadius: BorderRadius.circular(18),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withAlpha(10),
-            blurRadius: 12,
-            offset: const Offset(0, 6),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Expanded(
-                child: Text(
-                  item.title,
-                  style: const TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.w700,
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
+          child: Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.78),
+              borderRadius: BorderRadius.circular(18),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withAlpha(10),
+                  blurRadius: 12,
+                  offset: const Offset(0, 6),
+                ),
+              ],
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: Text(
+                        item.title,
+                        style: const TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                    Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        Text(
+                          _formatTime(item.date),
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: Colors.black.withAlpha(150),
+                          ),
+                        ),
+                        if (item.type == _NotificationType.action && item.status != _NotificationStatus.pending) ...[
+                          const SizedBox(height: 0.5),
+                          _buildStatusBadge(item.status),
+                        ],
+                        const SizedBox(height: 0.5),
+                        Text(
+                          _formatDate(item.date),
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: Colors.black.withAlpha(150),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  item.subtitle,
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: Colors.black.withAlpha(166),
                   ),
                 ),
-              ),
-              if (item.type == _NotificationType.action && item.status != _NotificationStatus.pending)
-                _buildStatusBadge(item.status),
-            ],
-          ),
-          const SizedBox(height: 6),
-          Text(
-            item.subtitle,
-            style: TextStyle(
-              fontSize: 13,
-              color: Colors.black.withAlpha(166),
+                const SizedBox(height: 12),
+                if (item.type == _NotificationType.action) _buildActionButtons(item),
+              ],
             ),
           ),
-          const SizedBox(height: 12),
-          if (item.type == _NotificationType.action) _buildActionButtons(item),
-        ],
+        ),
       ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
+    final items = _sections.expand((s) => s.items).toList()
+      ..sort((a, b) => b.date.compareTo(a.date));
+
     return Scaffold(
+      extendBodyBehindAppBar: true,
       appBar: AppBar(
         backgroundColor: Colors.transparent,
         elevation: 0,
@@ -301,24 +373,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
               physics: const BouncingScrollPhysics(),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
-                children: _sections
-                    .map(
-                      (section) => Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            section.title,
-                            style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                                  fontWeight: FontWeight.w700,
-                                ),
-                          ),
-                          const SizedBox(height: 12),
-                          ...section.items.map(_buildNotificationCard),
-                          const SizedBox(height: 26),
-                        ],
-                      ),
-                    )
-                    .toList(),
+                children: items.map(_buildNotificationCard).toList(),
               ),
             ),
           ),

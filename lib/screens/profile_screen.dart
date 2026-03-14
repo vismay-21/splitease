@@ -1,3 +1,5 @@
+import 'dart:ui';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -73,11 +75,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
       padding: const EdgeInsets.fromLTRB(24, 16, 24, 12),
       child: Text(
         'Your profile',
-        style: TextStyle(
-          fontSize: 34,
+        style: const TextStyle(
+          fontSize: 25,
           height: 1.1,
-          fontWeight: FontWeight.w400,
-          color: textDark,
+          fontWeight: FontWeight.w800,
+          color: Colors.black,
           letterSpacing: -1.2,
         ),
       ),
@@ -85,157 +87,169 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   Widget _buildIdentitySection(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(24),
-      decoration: BoxDecoration(
-        color: cardColor,
-        borderRadius: BorderRadius.circular(36),
-        boxShadow: [
-          BoxShadow(
-            color: primaryBlue.withOpacity(0.15),
-            blurRadius: 24,
-            offset: const Offset(0, 8),
-          ),
-        ],
-      ),
-      child: Row(
-        children: [
-          Container(
-            height: 64,
-            width: 64,
-            decoration: BoxDecoration(
-              color: primaryBlue,
-              shape: BoxShape.circle,
-              image: const DecorationImage(
-                image: NetworkImage(
-                  'https://i.pravatar.cc/150?img=11',
-                ), // Placeholder mimicking the avatar
-                fit: BoxFit.cover,
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(36),
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
+        child: Container(
+          padding: const EdgeInsets.all(24),
+          decoration: BoxDecoration(
+            color: Colors.white.withOpacity(0.78),
+            borderRadius: BorderRadius.circular(36),
+            boxShadow: [
+              BoxShadow(
+                color: primaryBlue.withOpacity(0.15),
+                blurRadius: 24,
+                offset: const Offset(0, 8),
               ),
-            ),
+            ],
           ),
-          const SizedBox(width: 16),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  _username,
-                  style: TextStyle(
-                    fontSize: 20,
-                    fontWeight: FontWeight.w600,
-                    color: textDark,
-                    letterSpacing: -0.5,
+          child: Row(
+            children: [
+              Container(
+                height: 64,
+                width: 64,
+                decoration: BoxDecoration(
+                  color: primaryBlue,
+                  shape: BoxShape.circle,
+                  image: const DecorationImage(
+                    image: NetworkImage(
+                      'https://i.pravatar.cc/150?img=11',
+                    ), // Placeholder mimicking the avatar
+                    fit: BoxFit.cover,
                   ),
                 ),
-                const SizedBox(height: 4),
-                Text(
-                  _email,
-                  style: TextStyle(
-                    fontSize: 14,
-                    color: textSoft,
-                    fontWeight: FontWeight.w400,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          Container(
-            decoration: BoxDecoration(
-              color: primaryDark,
-              shape: BoxShape.circle,
-            ),
-            child: IconButton(
-              icon: const Icon(
-                Icons.edit_outlined,
-                color: Colors.white,
-                size: 20,
               ),
-              onPressed: () => _showEditProfileDialog(context),
-            ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      _username,
+                      style: TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.w600,
+                        color: textDark,
+                        letterSpacing: -0.5,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      _email,
+                      style: TextStyle(
+                        fontSize: 14,
+                        color: textSoft,
+                        fontWeight: FontWeight.w400,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Container(
+                decoration: BoxDecoration(
+                  color: primaryDark,
+                  shape: BoxShape.circle,
+                ),
+                child: IconButton(
+                  icon: const Icon(
+                    Icons.edit_outlined,
+                    color: Colors.white,
+                    size: 20,
+                  ),
+                  onPressed: () => _showEditProfileDialog(context),
+                ),
+              ),
+            ],
           ),
-        ],
+        ),
       ),
     );
   }
 
   Widget _buildSettingsSection(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
-      decoration: BoxDecoration(
-        color: cardColor,
-        borderRadius: BorderRadius.circular(36),
-        boxShadow: [
-          BoxShadow(
-            color: primaryBlue.withOpacity(0.15),
-            blurRadius: 24,
-            offset: const Offset(0, 8),
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(36),
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+          decoration: BoxDecoration(
+            color: Colors.white.withOpacity(0.78),
+            borderRadius: BorderRadius.circular(36),
+            boxShadow: [
+              BoxShadow(
+                color: primaryBlue.withOpacity(0.15),
+                blurRadius: 24,
+                offset: const Offset(0, 8),
+              ),
+            ],
           ),
-        ],
-      ),
-      child: Column(
-        children: [
-          _buildSettingsTile(
-            context,
-            icon: Icons.account_balance_wallet_outlined,
-            title: 'UPI ID: $_upiId',
-            onTap: () async {
-              await Clipboard.setData(ClipboardData(text: _upiId));
-              if (!context.mounted) {
-                return;
-              }
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: const Text('UPI ID copied to clipboard'),
-                  behavior: SnackBarBehavior.floating,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(16),
-                  ),
+          child: Column(
+            children: [
+              _buildSettingsTile(
+                context,
+                icon: Icons.account_balance_wallet_outlined,
+                title: 'UPI ID: $_upiId',
+                onTap: () async {
+                  await Clipboard.setData(ClipboardData(text: _upiId));
+                  if (!context.mounted) {
+                    return;
+                  }
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: const Text('UPI ID copied to clipboard'),
+                      behavior: SnackBarBehavior.floating,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                    ),
+                  );
+                },
+              ),
+              _buildSettingsTile(
+                context,
+                icon: Icons.lock_outline_rounded,
+                title: 'Change password',
+                onTap: () => _showChangePasswordDialog(context),
+              ),
+              _buildSettingsTile(
+                context,
+                icon: Icons.notifications_none_rounded,
+                title: 'Notifications',
+                trailing: Switch(
+                  value: _notificationsEnabled,
+                  activeColor: Colors.white,
+                  activeTrackColor: primaryDark,
+                  inactiveTrackColor: Colors.grey.shade300,
+                  onChanged: (value) {
+                    setState(() {
+                      _notificationsEnabled = value;
+                    });
+                  },
                 ),
-              );
-            },
+              ),
+              _buildSettingsTile(
+                context,
+                icon: Icons.privacy_tip_outlined,
+                title: 'Privacy',
+                onTap: () {},
+              ),
+              _buildSettingsTile(
+                context,
+                icon: Icons.logout_rounded,
+                title: 'Logout',
+                textColor: Colors.redAccent,
+                iconColor: Colors.redAccent,
+                iconBgColor: Colors.red.shade50,
+                hideChevron: true,
+                onTap: () async {
+                  await Supabase.instance.client.auth.signOut();
+                },
+              ),
+            ],
           ),
-          _buildSettingsTile(
-            context,
-            icon: Icons.lock_outline_rounded,
-            title: 'Change password',
-            onTap: () => _showChangePasswordDialog(context),
-          ),
-          _buildSettingsTile(
-            context,
-            icon: Icons.notifications_none_rounded,
-            title: 'Notifications',
-            trailing: Switch(
-              value: _notificationsEnabled,
-              activeColor: Colors.white,
-              activeTrackColor: primaryDark,
-              inactiveTrackColor: Colors.grey.shade300,
-              onChanged: (value) {
-                setState(() {
-                  _notificationsEnabled = value;
-                });
-              },
-            ),
-          ),
-          _buildSettingsTile(
-            context,
-            icon: Icons.privacy_tip_outlined,
-            title: 'Privacy',
-            onTap: () {},
-          ),
-          _buildSettingsTile(
-            context,
-            icon: Icons.logout_rounded,
-            title: 'Logout',
-            textColor: Colors.redAccent,
-            iconColor: Colors.redAccent,
-            iconBgColor: Colors.red.shade50,
-            hideChevron: true,
-            onTap: () async {
-              await Supabase.instance.client.auth.signOut();
-            },
-          ),
-        ],
+        ),
       ),
     );
   }

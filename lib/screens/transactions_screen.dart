@@ -1,3 +1,5 @@
+import 'dart:ui';
+
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -78,14 +80,14 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
           begin: Alignment.topCenter,
           end: Alignment.bottomCenter,
           colors: [
-            Color(0xFFE9F4FF),
-            Color(0xFFF1F8FF),
+            Color(0xFFEAF5FA),
+            Color(0xFFD1E6F4),
           ],
         ),
       ),
       child: SafeArea(
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 18),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -93,11 +95,12 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
                   Text(
-                    'Transactions',
-                    style: Theme.of(context)
-                        .textTheme
-                        .headlineSmall
-                        ?.copyWith(fontWeight: FontWeight.w700),
+                    'Transaction',
+                    style: const TextStyle(
+                      fontSize: 25,
+                      fontWeight: FontWeight.w800,
+                      color: Colors.black,
+                    ),
                   ),
                   IconButton(
                     onPressed: () {
@@ -239,110 +242,119 @@ class _TransactionCard extends StatelessWidget {
   Widget build(BuildContext context) {
     return Material(
       borderRadius: BorderRadius.circular(18),
-      color: Colors.white,
+      color: Colors.transparent,
       elevation: 0.8,
       child: ClipRRect(
         borderRadius: BorderRadius.circular(18),
-        child: ExpansionTile(
-          tilePadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-          collapsedBackgroundColor: Colors.white,
-          backgroundColor: Colors.white,
-          expandedAlignment: Alignment.topLeft,
-          leading: Container(
-            width: 8,
-            height: 52,
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
+          child: Container(
             decoration: BoxDecoration(
-              color: item.isCredit ? Colors.green : Colors.red,
-              borderRadius: BorderRadius.circular(6),
+              color: const Color(0xE6F9FCFF), // slightly whiter blue tint + transparency
+              borderRadius: BorderRadius.circular(18),
             ),
-          ),
-          title: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                item.title,
-                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                      fontWeight: FontWeight.w700,
-                    ),
-              ),
-              const SizedBox(height: 2),
-              Text(
-                item.groupName.isNotEmpty
-                    ? '${item.groupName} · ${item.subtitle}'
-                    : item.subtitle,
-                style: Theme.of(context)
-                    .textTheme
-                    .bodySmall
-                    ?.copyWith(color: Colors.black54),
-              ),
-            ],
-          ),
-          trailing: Column(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Text(
-                '${item.isCredit ? '+' : '-'}${_formatAmount(item.amount)}',
-                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                      fontWeight: FontWeight.w700,
-                      color: item.isCredit ? Colors.green : Colors.red,
-                    ),
-              ),
-              const SizedBox(height: 2),
-              Text(
-                _formatDateTime(item.date),
-                style: Theme.of(context)
-                    .textTheme
-                    .bodySmall
-                    ?.copyWith(color: Colors.black45),
-              ),
-            ],
-          ),
-          childrenPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-          children: [
-            if (item.groupName.isNotEmpty) ...[
-              _DetailRow(label: 'Group', value: item.groupName),
-              const SizedBox(height: 8),
-            ],
-            _DetailRow(label: item.typeLabel, value: item.counterpartyLabel),
-            const SizedBox(height: 8),
-            if (item.details.isNotEmpty) ...[
-              _DetailRow(label: 'Details', value: item.details),
-              const SizedBox(height: 8),
-            ],
-            if (item.billImageUrl != null) ...[
-              ClipRRect(
-                borderRadius: BorderRadius.circular(16),
-                child: AspectRatio(
-                  aspectRatio: 4 / 3,
-                  child: Image.network(
-                    item.billImageUrl!,
-                    fit: BoxFit.cover,
-                    loadingBuilder: (context, child, progress) {
-                      if (progress == null) return child;
-                      return const Center(child: CircularProgressIndicator());
-                    },
-                    errorBuilder: (context, error, stackTrace) {
-                      return Container(
-                        color: Colors.black12,
-                        alignment: Alignment.center,
-                        child: const Text('Unable to load bill image'),
-                      );
-                    },
-                  ),
+            child: ExpansionTile(
+              tilePadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+              collapsedBackgroundColor: Colors.transparent,
+              backgroundColor: Colors.transparent,
+              expandedAlignment: Alignment.topLeft,
+              leading: Container(
+                width: 8,
+                height: 52,
+                decoration: BoxDecoration(
+                  color: item.isCredit ? Colors.green : Colors.red,
+                  borderRadius: BorderRadius.circular(6),
                 ),
               ),
-              const SizedBox(height: 10),
-            ],
-            if (item.settlementStatus != null) ...[
-              _DetailRow(label: 'Settlement', value: item.settlementStatus!),
-              const SizedBox(height: 8),
-            ],
-            if (item.paymentMethod != null) ...[
-              _DetailRow(label: 'Method', value: item.paymentMethod!),
-              const SizedBox(height: 8),
-            ],
-          ],
+              title: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    item.title,
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          fontWeight: FontWeight.w700,
+                        ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    item.groupName.isNotEmpty
+                        ? '${item.groupName} · ${item.subtitle}'
+                        : item.subtitle,
+                    style: Theme.of(context)
+                        .textTheme
+                        .bodySmall
+                        ?.copyWith(color: Colors.black54),
+                  ),
+                ],
+              ),
+              trailing: Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(
+                    '${item.isCredit ? '+' : '-'}${_formatAmount(item.amount)}',
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          fontWeight: FontWeight.w700,
+                          color: item.isCredit ? Colors.green : Colors.red,
+                        ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    _formatDateTime(item.date),
+                    style: Theme.of(context)
+                        .textTheme
+                        .bodySmall
+                        ?.copyWith(color: Colors.black45),
+                  ),
+                ],
+              ),
+              childrenPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+              children: [
+                if (item.groupName.isNotEmpty) ...[
+                  _DetailRow(label: 'Group', value: item.groupName),
+                  const SizedBox(height: 8),
+                ],
+                _DetailRow(label: item.typeLabel, value: item.counterpartyLabel),
+                const SizedBox(height: 8),
+                if (item.details.isNotEmpty) ...[
+                  _DetailRow(label: 'Details', value: item.details),
+                  const SizedBox(height: 8),
+                ],
+                if (item.billImageUrl != null) ...[
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(16),
+                    child: AspectRatio(
+                      aspectRatio: 4 / 3,
+                      child: Image.network(
+                        item.billImageUrl!,
+                        fit: BoxFit.cover,
+                        loadingBuilder: (context, child, progress) {
+                          if (progress == null) return child;
+                          return const Center(child: CircularProgressIndicator());
+                        },
+                        errorBuilder: (context, error, stackTrace) {
+                          return Container(
+                            color: Colors.black12,
+                            alignment: Alignment.center,
+                            child: const Text('Unable to load bill image'),
+                          );
+                        },
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                ],
+                if (item.settlementStatus != null) ...[
+                  _DetailRow(label: 'Settlement', value: item.settlementStatus!),
+                  const SizedBox(height: 8),
+                ],
+                if (item.paymentMethod != null) ...[
+                  _DetailRow(label: 'Method', value: item.paymentMethod!),
+                  const SizedBox(height: 8),
+                ],
+              ],
+            ),
+          ),
         ),
       ),
     );
