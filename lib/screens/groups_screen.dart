@@ -5,6 +5,102 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+final _fakeGroups = [
+  GroupSummary(
+    id: 'grp1',
+    name: 'Trip to Goa',
+    icon: 'airplanemode_active',
+    createdByUserId: 'Ayaan K.',
+    totalExpenses: 1890.50,
+    totalOwed: 560.25,
+    balance: -250.50,
+    memberCount: 5,
+    settlementStatus: 'Active',
+  ),
+  GroupSummary(
+    id: 'grp2',
+    name: 'Room Rent',
+    icon: 'home',
+    createdByUserId: 'Sneh',
+    totalExpenses: 3450.00,
+    totalOwed: 1000.00,
+    balance: 280.75,
+    memberCount: 3,
+    settlementStatus: 'Active',
+  ),
+];
+
+class _GroupTransaction {
+  const _GroupTransaction({
+    required this.date,
+    required this.title,
+    required this.subtitle,
+    required this.amount,
+    required this.isCredit,
+    required this.icon,
+  });
+
+  final String date;
+  final String title;
+  final String subtitle;
+  final double amount;
+  final bool isCredit;
+  final IconData icon;
+}
+
+class _SettleMember {
+  _SettleMember({
+    required this.name,
+    required this.balance,
+  });
+
+  final String name;
+  double balance;
+}
+
+const _fakeTransactions = [
+  _GroupTransaction(
+    date: 'Apr 04',
+    title: 'Grocery',
+    subtitle: 'You paid',
+    amount: 20.50,
+    isCredit: false,
+    icon: Icons.shopping_bag_outlined,
+  ),
+  _GroupTransaction(
+    date: 'May 02',
+    title: 'Train refund price',
+    subtitle: 'You lent',
+    amount: 1600.00,
+    isCredit: true,
+    icon: Icons.train,
+  ),
+  _GroupTransaction(
+    date: 'May 11',
+    title: 'Dinner',
+    subtitle: 'You paid',
+    amount: 430.00,
+    isCredit: false,
+    icon: Icons.restaurant_outlined,
+  ),
+  _GroupTransaction(
+    date: 'May 23',
+    title: 'Taxi share',
+    subtitle: 'You paid',
+    amount: 35.20,
+    isCredit: false,
+    icon: Icons.directions_car_outlined,
+  ),
+  _GroupTransaction(
+    date: 'Jun 01',
+    title: 'Movie night',
+    subtitle: 'You lent',
+    amount: 220.00,
+    isCredit: true,
+    icon: Icons.movie_outlined,
+  ),
+];
+
 class GroupsScreen extends StatefulWidget {
   const GroupsScreen({super.key});
 
@@ -121,55 +217,24 @@ class _GroupsScreenState extends State<GroupsScreen>
   }
 
   Future<void> _loadData() async {
-    final user = _currentUser;
-    if (user == null) {
-      setState(() {
-        _isLoading = false;
-        _loadError = 'Please sign in again to view groups.';
-      });
-      return;
-    }
-
     setState(() {
-      _isLoading = !_hasLoadedOnce;
+      _isLoading = true;
       _loadError = null;
     });
 
-    try {
-      final results = await Future.wait<dynamic>([
-        _fetchGroupsForUser(user.id),
-        _fetchPendingInvitations(user.email),
-      ]);
+    // Simulate a short loading delay.
+    await Future.delayed(const Duration(milliseconds: 250));
 
-      if (!mounted) {
-        return;
-      }
+    if (!mounted) return;
 
-      setState(() {
-        _groups = results[0] as List<GroupSummary>;
-        _pendingInvitations = results[1] as List<GroupInvitation>;
-        _isLoading = false;
-        _hasLoadedOnce = true;
-        _cachedGroups = List<GroupSummary>.from(_groups);
-        _cachedInvitations = List<GroupInvitation>.from(_pendingInvitations);
-      });
-    } on PostgrestException catch (error) {
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        _isLoading = false;
-        _loadError = _friendlyLoadError(error);
-      });
-    } catch (_) {
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        _isLoading = false;
-        _loadError = 'Unable to load groups right now.';
-      });
-    }
+    setState(() {
+      _groups = List<GroupSummary>.from(_fakeGroups);
+      _pendingInvitations = [];
+      _isLoading = false;
+      _hasLoadedOnce = true;
+      _cachedGroups = List<GroupSummary>.from(_groups);
+      _cachedInvitations = List<GroupInvitation>.from(_pendingInvitations);
+    });
   }
 
   Future<List<GroupSummary>> _fetchGroupsForUser(String userId) async {
@@ -434,6 +499,505 @@ class _GroupsScreenState extends State<GroupsScreen>
         onAddExpense: () => _openAddExpenseDialog(group),
         onAddMembers: () => _openAddMemberDialog(group),
       ),
+    );
+  }
+
+  Future<void> _openGroupDetailPopup(GroupSummary group) async {
+    final youOwe = group.balance < 0 ? -group.balance : 0.0;
+    final youAreOwed = group.balance > 0 ? group.balance : 0.0;
+
+    await showDialog<void>(
+      context: context,
+      builder: (context) {
+        final maxHeight = MediaQuery.of(context).size.height * 0.82;
+        final maxWidth = MediaQuery.of(context).size.width * 0.92;
+        final createdDate = 'Apr 04, 2024';
+
+        return Dialog(
+          insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
+          backgroundColor: Colors.transparent,
+          child: SizedBox(
+            height: maxHeight,
+            width: maxWidth,
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(26),
+              child: Material(
+                color: Colors.white,
+                child: SingleChildScrollView(
+                  physics: const BouncingScrollPhysics(),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      // Header
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(20, 20, 20, 16),
+                        child: Stack(
+                          children: [
+                            Positioned(
+                              right: 0,
+                              child: IconButton(
+                                padding: const EdgeInsets.all(12),
+                                constraints: const BoxConstraints(),
+                                icon: const Icon(Icons.close, size: 22),
+                                onPressed: () => Navigator.of(context).pop(),
+                              ),
+                            ),
+                            Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Expanded(
+                                      child: Text(
+                                        group.name,
+                                        maxLines: 2,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: Theme.of(context)
+                                            .textTheme
+                                            .headlineSmall
+                                            ?.copyWith(
+                                              fontWeight: FontWeight.w900,
+                                              fontSize: 30,
+                                            ),
+                                      ),
+                                    ),
+                                    const SizedBox(width: 12),
+                                    CircleAvatar(
+                                      radius: 28,
+                                      backgroundColor: const Color(0xFFD8ECFA),
+                                      foregroundColor: const Color(0xFF1D6CAB),
+                                      child: Icon(
+                                        _GroupBar._iconFor(group.icon),
+                                        size: 28,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 12),
+                                Row(
+                                  children: [
+                                    const Icon(Icons.person, size: 18, color: Color(0xFF5A6E82)),
+                                    const SizedBox(width: 6),
+                                    Text(
+                                      'Created by ${group.createdByUserId}',
+                                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                                            color: const Color(0xFF5A6E82),
+                                          ),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 8),
+                                Row(
+                                  children: [
+                                    const Icon(Icons.group, size: 18, color: Color(0xFF5A6E82)),
+                                    const SizedBox(width: 6),
+                                    Text(
+                                      '${group.memberCount} people',
+                                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                                            color: const Color(0xFF5A6E82),
+                                          ),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 8),
+                                Row(
+                                  children: [
+                                    const Icon(Icons.calendar_today, size: 18, color: Color(0xFF5A6E82)),
+                                    const SizedBox(width: 6),
+                                    Text(
+                                      'Created $createdDate',
+                                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                                            color: const Color(0xFF5A6E82),
+                                          ),
+                                    ),
+                                  ],
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                      const Divider(height: 1),
+
+                      // Owe / Owed cards
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: _BalanceCard(
+                                label: 'To Pay',
+                                amount: youOwe,
+                                icon: Icons.arrow_upward,
+                                iconBackground: const Color(0xFFFFE5E5),
+                                iconColor: const Color(0xFFB33A2E),
+                                amountColor: const Color(0xFFB33A2E),
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: _BalanceCard(
+                                label: 'To Receive',
+                                amount: youAreOwed,
+                                icon: Icons.arrow_downward,
+                                iconBackground: const Color(0xFFE9F9EB),
+                                iconColor: const Color(0xFF1B7D3A),
+                                amountColor: const Color(0xFF1B7D3A),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const Divider(height: 1),
+
+                      // Buttons
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: FilledButton(
+                                onPressed: () => _openSettleUpPopup(group),
+                                style: FilledButton.styleFrom(
+                                  backgroundColor: const Color(0xFF1A4A8F),
+                                  padding: const EdgeInsets.symmetric(vertical: 12),
+                                ),
+                                child: const Text(
+                                  'Settle up',
+                                  style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: FilledButton(
+                                onPressed: () => _showEmptyDialog(context, 'Balances'),
+                                style: FilledButton.styleFrom(
+                                  backgroundColor: const Color(0xFF1A4A8F),
+                                  padding: const EdgeInsets.symmetric(vertical: 12),
+                                ),
+                                child: const Text(
+                                  'Balances',
+                                  style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const Divider(height: 1),
+
+                      // Transactions list section
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                        child: ListView.separated(
+                          shrinkWrap: true,
+                          physics: const NeverScrollableScrollPhysics(),
+                          itemCount: _fakeTransactions.length,
+                          separatorBuilder: (context, index) => const SizedBox(height: 10),
+                          itemBuilder: (context, index) {
+                            final transaction = _fakeTransactions[index];
+                            return _TransactionRow(
+                              transaction: transaction,
+                            );
+                          },
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _openSettleUpPopup(GroupSummary group) async {
+    final members = <_SettleMember>[
+      _SettleMember(name: 'Ayaan K.', balance: -250.50),
+      _SettleMember(name: 'Sneh', balance: 180.00),
+      _SettleMember(name: 'Priya', balance: -45.20),
+      _SettleMember(name: 'Raj', balance: 75.40),
+    ];
+
+    await showDialog<void>(
+      context: context,
+      builder: (context) {
+        final maxHeight = MediaQuery.of(context).size.height * 0.9;
+        final maxWidth = MediaQuery.of(context).size.width * 0.92;
+
+        return Dialog(
+          insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
+          backgroundColor: Colors.transparent,
+          child: SizedBox(
+            height: maxHeight,
+            width: maxWidth,
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(26),
+              child: Material(
+                color: Colors.white,
+                child: StatefulBuilder(
+                  builder: (context, setState) {
+                    return Column(
+                      children: [
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(20, 20, 20, 10),
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      'Settle up',
+                                      style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                                            fontWeight: FontWeight.w900,
+                                          ),
+                                    ),
+                                    const SizedBox(height: 6),
+                                    Text(
+                                      'Select a member to settle your balance',
+                                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                                            color: const Color(0xFF5A6E82),
+                                          ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              IconButton(
+                                padding: const EdgeInsets.all(12),
+                                constraints: const BoxConstraints(),
+                                icon: const Icon(Icons.close, size: 22),
+                                onPressed: () => Navigator.of(context).pop(),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const Divider(height: 1),
+                        Expanded(
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                            child: ListView.separated(
+                              physics: const BouncingScrollPhysics(),
+                              itemCount: members.length,
+                              separatorBuilder: (context, index) => const SizedBox(height: 10),
+                              itemBuilder: (context, index) {
+                                final member = members[index];
+                                final owesMe = member.balance > 0;
+                                final iOwe = member.balance < 0;
+                                final amount = member.balance.abs();
+                                final amountLabel = _money(amount);
+                                final subtitle = owesMe
+                                    ? 'Owes you'
+                                    : iOwe
+                                        ? 'You owe'
+                                        : 'Settled';
+
+                                return Container(
+                                  padding: const EdgeInsets.all(14),
+                                  decoration: BoxDecoration(
+                                    color: Colors.white,
+                                    borderRadius: BorderRadius.circular(18),
+                                    boxShadow: [
+                                      BoxShadow(
+                                        color: Colors.black.withAlpha(12),
+                                        blurRadius: 12,
+                                        offset: const Offset(0, 4),
+                                      ),
+                                    ],
+                                  ),
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Row(
+                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        children: [
+                                          CircleAvatar(
+                                            radius: 20,
+                                            backgroundColor: const Color(0xFFD8ECFA),
+                                            foregroundColor: const Color(0xFF1D6CAB),
+                                            child: Text(
+                                              member.name.isNotEmpty ? member.name[0] : '?',
+                                              style: const TextStyle(fontWeight: FontWeight.w800),
+                                            ),
+                                          ),
+                                          const SizedBox(width: 12),
+                                          Expanded(
+                                            child: Column(
+                                              crossAxisAlignment: CrossAxisAlignment.start,
+                                              children: [
+                                                Text(
+                                                  member.name,
+                                                  style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                                                        fontWeight: FontWeight.w800,
+                                                      ),
+                                                ),
+                                                const SizedBox(height: 4),
+                                                Text(
+                                                  subtitle,
+                                                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                                        color: const Color(0xFF5A6E82),
+                                                      ),
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                          const SizedBox(width: 12),
+                                          Column(
+                                            crossAxisAlignment: CrossAxisAlignment.end,
+                                            children: [
+                                              Text(
+                                                amountLabel,
+                                                style: Theme.of(context)
+                                                    .textTheme
+                                                    .titleSmall
+                                                    ?.copyWith(
+                                                      fontWeight: FontWeight.w900,
+                                                      color: owesMe
+                                                          ? const Color(0xFF1B7D3A)
+                                                          : iOwe
+                                                              ? const Color(0xFFB33A2E)
+                                                              : const Color(0xFF5C6470),
+                                                    ),
+                                              ),
+                                              const SizedBox(height: 2),
+                                              Text(
+                                                '₹${amount.toStringAsFixed(2)}',
+                                                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                                      color: const Color(0xFF5A6E82),
+                                                    ),
+                                              ),
+                                            ],
+                                          ),
+                                        ],
+                                      ),
+                                      const SizedBox(height: 14),
+                                      Row(
+                                        children: [
+                                          if (iOwe) ...[
+                                            Expanded(
+                                              child: FilledButton(
+                                                onPressed: () {
+                                                  Navigator.of(context).pop();
+                                                  _showMessage('Open UPI payment flow (stub).');
+                                                },
+                                                style: FilledButton.styleFrom(
+                                                  padding: const EdgeInsets.symmetric(vertical: 12),
+                                                  backgroundColor: const Color(0xFF1A4A8F),
+                                                ),
+                                                child: const Text(
+                                                  'Pay by UPI',
+                                                  style: TextStyle(
+                                                    color: Colors.white,
+                                                    fontWeight: FontWeight.w700,
+                                                  ),
+                                                ),
+                                              ),
+                                            ),
+                                            const SizedBox(width: 10),
+                                            Expanded(
+                                              child: FilledButton(
+                                                onPressed: () {
+                                                  Navigator.of(context).pop();
+                                                  _showMessage('Marked as paid by cash (stub).');
+                                                },
+                                                style: FilledButton.styleFrom(
+                                                  padding: const EdgeInsets.symmetric(vertical: 12),
+                                                  backgroundColor: const Color(0xFF1A4A8F),
+                                                ),
+                                                child: const Text(
+                                                  'Pay by cash',
+                                                  style: TextStyle(
+                                                    color: Colors.white,
+                                                    fontWeight: FontWeight.w700,
+                                                  ),
+                                                ),
+                                              ),
+                                            ),
+                                          ] else if (owesMe) ...[
+                                            Expanded(
+                                              child: FilledButton(
+                                                onPressed: () {
+                                                  Navigator.of(context).pop();
+                                                  _showMessage('Request sent (stub).');
+                                                },
+                                                style: FilledButton.styleFrom(
+                                                  padding: const EdgeInsets.symmetric(vertical: 12),
+                                                  backgroundColor: const Color(0xFF1A4A8F),
+                                                ),
+                                                child: const Text(
+                                                  'Request',
+                                                  style: TextStyle(
+                                                    color: Colors.white,
+                                                    fontWeight: FontWeight.w700,
+                                                  ),
+                                                ),
+                                              ),
+                                            ),
+                                            const SizedBox(width: 10),
+                                            Expanded(
+                                              child: FilledButton(
+                                                onPressed: () {
+                                                  setState(() {
+                                                    member.balance = 0;
+                                                  });
+                                                  _showMessage('Waived amount for ${member.name}.');
+                                                },
+                                                style: FilledButton.styleFrom(
+                                                  padding: const EdgeInsets.symmetric(vertical: 12),
+                                                  backgroundColor: const Color(0xFF1A4A8F),
+                                                ),
+                                                child: const Text(
+                                                  'Waive',
+                                                  style: TextStyle(
+                                                    color: Colors.white,
+                                                    fontWeight: FontWeight.w700,
+                                                  ),
+                                                ),
+                                              ),
+                                            ),
+                                          ] else ...[
+                                            Expanded(
+                                              child: FilledButton(
+                                                onPressed: () {
+                                                  _showMessage('Nothing to settle.');
+                                                },
+                                                style: FilledButton.styleFrom(
+                                                  padding: const EdgeInsets.symmetric(vertical: 12),
+                                                  backgroundColor: const Color(0xFFB0BEC5),
+                                                ),
+                                                child: const Text(
+                                                  'Settled',
+                                                  style: TextStyle(
+                                                    color: Colors.white,
+                                                    fontWeight: FontWeight.w700,
+                                                  ),
+                                                ),
+                                              ),
+                                            ),
+                                          ],
+                                        ],
+                                      ),
+                                    ],
+                                  ),
+                                );
+                              },
+                            ),
+                          ),
+                        ),
+                      ],
+                    );
+                  },
+                ),
+              ),
+            ),
+          ),
+        );
+      },
     );
   }
 
@@ -1230,9 +1794,7 @@ class _GroupsScreenState extends State<GroupsScreen>
                       padding: const EdgeInsets.only(bottom: 10),
                       child: _GroupBar(
                         group: group,
-                        onExpenseList: () => _openExpenseListPopup(group),
-                        onMemberBalance: () => _openMemberBalancePopup(group),
-                        onGroupActions: () => _openGroupActionsPopup(group),
+                        onTap: () => _openGroupDetailPopup(group),
                       ),
                     ),
                   ),
@@ -1286,15 +1848,11 @@ class _GroupsScreenState extends State<GroupsScreen>
 class _GroupBar extends StatelessWidget {
   const _GroupBar({
     required this.group,
-    required this.onExpenseList,
-    required this.onMemberBalance,
-    required this.onGroupActions,
+    required this.onTap,
   });
 
   final GroupSummary group;
-  final VoidCallback onExpenseList;
-  final VoidCallback onMemberBalance;
-  final VoidCallback onGroupActions;
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
@@ -1313,160 +1871,77 @@ class _GroupBar extends StatelessWidget {
         : isOwed
             ? 'You are owed'
             : 'Settled up';
-    final statusLabel = group.settlementStatus ?? 'Active';
-    final isInactive = statusLabel.toLowerCase() == 'inactive';
-    final statusDotColor = isInactive ? const Color(0xFFD43C30) : const Color(0xFF1B7D3A);
 
     return Material(
       color: Colors.white,
       borderRadius: BorderRadius.circular(14),
-      child: Padding(
-        padding: const EdgeInsets.all(14),
-        child: Column(
+      child: InkWell(
+        borderRadius: BorderRadius.circular(14),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.all(14),
+          child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Expanded(
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        CircleAvatar(
-                          radius: 22,
-                          backgroundColor: const Color(0xFFD8ECFA),
-                          foregroundColor: const Color(0xFF1D6CAB),
-                          child: Icon(_iconFor(group.icon), size: 24),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Row(
-                                children: [
-                                  Expanded(
-                                    child: Text(
-                                      group.name,
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                                            fontWeight: FontWeight.w800,
-                                          ),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                              const SizedBox(height: 2),
-                              Text(
-                                '${group.memberCount} members  •  Total spending: ${_GroupsScreenState._money(totalExpenses)}',
-                                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                                      color: const Color(0xFF3A4450),
-                                      fontWeight: FontWeight.w600,
-                                    ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    children: [
-                      Text(
-                        money,
-                        style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                              color: amountColor,
-                              fontWeight: FontWeight.w800,
-                            ),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        caption,
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                              fontWeight: FontWeight.w600,
-                            ),
-                      ),
-                      const SizedBox(height: 8),
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFFF3F8FD),
-                          borderRadius: BorderRadius.circular(14),
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Container(
-                              width: 8,
-                              height: 8,
-                              decoration: BoxDecoration(
-                                color: statusDotColor,
-                                shape: BoxShape.circle,
-                              ),
-                            ),
-                            const SizedBox(width: 6),
-                            Text(
-                              statusLabel,
-                              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                                    fontWeight: FontWeight.w700,
-                                  ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
+              CircleAvatar(
+                radius: 22,
+                backgroundColor: const Color(0xFFD8ECFA),
+                foregroundColor: const Color(0xFF1D6CAB),
+                child: Icon(_iconFor(group.icon), size: 24),
               ),
-              const SizedBox(height: 16),
-              Row(
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      group.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                            fontWeight: FontWeight.w800,
+                          ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'Created by ${group.createdByUserId}',
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                            color: const Color(0xFF5A6E82),
+                          ),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      '${group.memberCount} members  •  Total spending: ${_GroupsScreenState._money(totalExpenses)}',
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                            color: const Color(0xFF3A4450),
+                            fontWeight: FontWeight.w600,
+                          ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 10),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
-                  Expanded(
-                    child: OutlinedButton(
-                      onPressed: onExpenseList,
-                      style: OutlinedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(vertical: 12),
-                        side: BorderSide(color: Colors.black.withAlpha(25)),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
+                  Text(
+                    money,
+                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                          color: amountColor,
+                          fontWeight: FontWeight.w800,
                         ),
-                      ),
-                      child: const Text('Expense List'),
-                    ),
                   ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: OutlinedButton(
-                      onPressed: onMemberBalance,
-                      style: OutlinedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(vertical: 12),
-                        side: BorderSide(color: Colors.black.withAlpha(25)),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
+                  const SizedBox(height: 2),
+                  Text(
+                    caption,
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          fontWeight: FontWeight.w600,
                         ),
-                      ),
-                      child: const Text('Member Balance'),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: FilledButton.tonal(
-                      onPressed: onGroupActions,
-                      style: FilledButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(vertical: 12),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                      ),
-                      child: const Text('Group Actions'),
-                    ),
                   ),
                 ],
               ),
             ],
+          ),
         ),
       ),
     );
@@ -1493,6 +1968,195 @@ class _GroupBar extends StatelessWidget {
       default:
         return Icons.group;
     }
+  }
+}
+
+void _showEmptyDialog(BuildContext context, String title) {
+  showDialog<void>(
+    context: context,
+    builder: (context) {
+      return AlertDialog(
+        title: Text(title),
+        content: const Text('This will be implemented in a later iteration.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Close'),
+          ),
+        ],
+      );
+    },
+  );
+}
+
+class _BalanceCard extends StatelessWidget {
+  const _BalanceCard({
+    required this.label,
+    required this.amount,
+    required this.icon,
+    required this.iconBackground,
+    required this.iconColor,
+    required this.amountColor,
+  });
+
+  final String label;
+  final double amount;
+  final IconData icon;
+  final Color iconBackground;
+  final Color iconColor;
+  final Color amountColor;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withAlpha(10),
+            blurRadius: 14,
+            offset: const Offset(0, 7),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: iconBackground,
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: Icon(
+              icon,
+              size: 20,
+              color: iconColor,
+            ),
+          ),
+          const SizedBox(height: 10),
+          Text(
+            label,
+            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  fontWeight: FontWeight.w700,
+                  color: const Color(0xFF3A4450),
+                ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            amount == 0 ? '₹0.00' : '₹${amount.toStringAsFixed(2)}',
+            style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                  fontWeight: FontWeight.w900,
+                  color: amountColor,
+                ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _TransactionRow extends StatelessWidget {
+  const _TransactionRow({required this.transaction});
+
+  final _GroupTransaction transaction;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withAlpha(10),
+            blurRadius: 10,
+            offset: const Offset(0, 5),
+          ),
+        ],
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        child: Row(
+          children: [
+            Expanded(
+              flex: 2,
+              child: Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFE9F4FF),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: Center(
+                  child: Text(
+                    transaction.date,
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: const Color(0xFF3A4450),
+                          fontWeight: FontWeight.w700,
+                        ),
+                    textAlign: TextAlign.center,
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              flex: 1,
+              child: Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF5F8FC),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: Icon(
+                  transaction.icon,
+                  color: const Color(0xFF1D6CAB),
+                  size: 22,
+                ),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              flex: 5,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(
+                    transaction.title,
+                    style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                          fontWeight: FontWeight.w700,
+                        ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    transaction.subtitle,
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: const Color(0xFF5A6E82),
+                        ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              flex: 2,
+              child: Text(
+                '${transaction.isCredit ? '+' : '-'}₹${transaction.amount.toStringAsFixed(2)}',
+                textAlign: TextAlign.right,
+                style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                      fontWeight: FontWeight.w700,
+                      color: transaction.isCredit ? const Color(0xFF1B7D3A) : const Color(0xFFB33A2E),
+                    ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }
 
