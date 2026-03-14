@@ -31,30 +31,34 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
       return [];
     }
 
-    // Expense records
+    final membershipRows = await _client
+        .from('group_members')
+        .select('group_id')
+        .eq('user_id', currentUserId) as List<dynamic>?;
+
+    final groupIds = (membershipRows ?? <dynamic>[])
+        .map((row) => row['group_id']?.toString() ?? '')
+        .where((id) => id.isNotEmpty)
+        .toList();
+
+    if (groupIds.isEmpty) {
+      return [];
+    }
+
+    // Main transaction records (group expenses only)
     final expenseRows = await _client
         .from('group_expenses')
         .select(
-          'id, description, amount, paid_by_user_id, paid_by_name, expense_date, owes_summary, bill_image_url, group:groups(name)',
+          'id, group_id, description, amount, paid_by_user_id, paid_by_name, expense_date, created_at, owes_summary, bill_image_url, group:groups(name)',
         )
-        .order('expense_date', ascending: false) as List<dynamic>?;
-
-    final settlementRows = await _client
-        .from('group_settlements')
-        .select(
-          'id, group_id, payer_user_id, receiver_user_id, amount, method, status, notes, created_at, group:groups(name)',
-        )
+        .inFilter('group_id', groupIds)
         .order('created_at', ascending: false) as List<dynamic>?;
 
     final expenses = (expenseRows ?? <dynamic>[]) // ignore: avoid_dynamic_calls
         .map((row) => _TransactionItem.fromExpenseRow(row, currentUserId))
         .toList();
 
-    final settlements = (settlementRows ?? <dynamic>[]) // ignore: avoid_dynamic_calls
-        .map((row) => _TransactionItem.fromSettlementRow(row, currentUserId))
-        .toList();
-
-    final all = [...expenses, ...settlements];
+    final all = [...expenses];
     all.sort((a, b) => b.date.compareTo(a.date));
     return all;
   }
@@ -244,119 +248,148 @@ class _TransactionCard extends StatelessWidget {
       borderRadius: BorderRadius.circular(18),
       color: Colors.transparent,
       elevation: 0.8,
-      child: ClipRRect(
+      child: InkWell(
         borderRadius: BorderRadius.circular(18),
-        child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
-          child: Container(
-            decoration: BoxDecoration(
-              color: const Color(0xE6F9FCFF), // slightly whiter blue tint + transparency
-              borderRadius: BorderRadius.circular(18),
-            ),
-            child: ExpansionTile(
-              tilePadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-              collapsedBackgroundColor: Colors.transparent,
-              backgroundColor: Colors.transparent,
-              expandedAlignment: Alignment.topLeft,
-              leading: Container(
-                width: 8,
-                height: 52,
-                decoration: BoxDecoration(
-                  color: item.isCredit ? Colors.green : Colors.red,
-                  borderRadius: BorderRadius.circular(6),
-                ),
+        onTap: () => _showDetailsDialog(context),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(18),
+          child: BackdropFilter(
+            filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
+            child: Container(
+              decoration: BoxDecoration(
+                color: const Color(0xE6F9FCFF),
+                borderRadius: BorderRadius.circular(18),
               ),
-              title: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+              child: Row(
                 children: [
-                  Text(
-                    item.title,
-                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                          fontWeight: FontWeight.w700,
-                        ),
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    item.groupName.isNotEmpty
-                        ? '${item.groupName} · ${item.subtitle}'
-                        : item.subtitle,
-                    style: Theme.of(context)
-                        .textTheme
-                        .bodySmall
-                        ?.copyWith(color: Colors.black54),
-                  ),
-                ],
-              ),
-              trailing: Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Text(
-                    '${item.isCredit ? '+' : '-'}${_formatAmount(item.amount)}',
-                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                          fontWeight: FontWeight.w700,
-                          color: item.isCredit ? Colors.green : Colors.red,
-                        ),
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    _formatDateTime(item.date),
-                    style: Theme.of(context)
-                        .textTheme
-                        .bodySmall
-                        ?.copyWith(color: Colors.black45),
-                  ),
-                ],
-              ),
-              childrenPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-              children: [
-                if (item.groupName.isNotEmpty) ...[
-                  _DetailRow(label: 'Group', value: item.groupName),
-                  const SizedBox(height: 8),
-                ],
-                _DetailRow(label: item.typeLabel, value: item.counterpartyLabel),
-                const SizedBox(height: 8),
-                if (item.details.isNotEmpty) ...[
-                  _DetailRow(label: 'Details', value: item.details),
-                  const SizedBox(height: 8),
-                ],
-                if (item.billImageUrl != null) ...[
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(16),
-                    child: AspectRatio(
-                      aspectRatio: 4 / 3,
-                      child: Image.network(
-                        item.billImageUrl!,
-                        fit: BoxFit.cover,
-                        loadingBuilder: (context, child, progress) {
-                          if (progress == null) return child;
-                          return const Center(child: CircularProgressIndicator());
-                        },
-                        errorBuilder: (context, error, stackTrace) {
-                          return Container(
-                            color: Colors.black12,
-                            alignment: Alignment.center,
-                            child: const Text('Unable to load bill image'),
-                          );
-                        },
-                      ),
+                  Container(
+                    width: 8,
+                    height: 52,
+                    decoration: BoxDecoration(
+                      color: item.isCredit ? Colors.green : Colors.red,
+                      borderRadius: BorderRadius.circular(6),
                     ),
                   ),
-                  const SizedBox(height: 10),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          item.title,
+                          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                                fontWeight: FontWeight.w700,
+                              ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          item.groupName.isNotEmpty
+                              ? '${item.groupName} · ${item.subtitle}'
+                              : item.subtitle,
+                          style: Theme.of(context)
+                              .textTheme
+                              .bodySmall
+                              ?.copyWith(color: Colors.black54),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Text(
+                        '${item.isCredit ? '+' : '-'}${_formatAmount(item.amount)}',
+                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                              fontWeight: FontWeight.w700,
+                              color: item.isCredit ? Colors.green : Colors.red,
+                            ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        _formatDateTime(item.date),
+                        style: Theme.of(context)
+                            .textTheme
+                            .bodySmall
+                            ?.copyWith(color: Colors.black45),
+                      ),
+                    ],
+                  ),
                 ],
-                if (item.settlementStatus != null) ...[
-                  _DetailRow(label: 'Settlement', value: item.settlementStatus!),
-                  const SizedBox(height: 8),
-                ],
-                if (item.paymentMethod != null) ...[
-                  _DetailRow(label: 'Method', value: item.paymentMethod!),
-                  const SizedBox(height: 8),
-                ],
-              ],
+              ),
             ),
           ),
         ),
       ),
+    );
+  }
+
+  Future<void> _showDetailsDialog(BuildContext context) async {
+    await showDialog<void>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: Text(item.title),
+          content: SizedBox(
+            width: 420,
+            child: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _DetailRow(label: 'Amount', value: '₹${_formatAmount(item.amount)}'),
+                  const SizedBox(height: 8),
+                  _DetailRow(label: 'Date & time', value: _formatDateTime(item.date)),
+                  const SizedBox(height: 8),
+                  if (item.groupName.isNotEmpty) ...[
+                    _DetailRow(label: 'Group', value: item.groupName),
+                    const SizedBox(height: 8),
+                  ],
+                  _DetailRow(label: item.typeLabel, value: item.counterpartyLabel),
+                  const SizedBox(height: 8),
+                  if (item.details.isNotEmpty) ...[
+                    _DetailRow(label: 'Details', value: item.details),
+                    const SizedBox(height: 8),
+                  ],
+                  if (item.billImageUrl != null) ...[
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(16),
+                      child: AspectRatio(
+                        aspectRatio: 4 / 3,
+                        child: Image.network(
+                          item.billImageUrl!,
+                          fit: BoxFit.cover,
+                          loadingBuilder: (context, child, progress) {
+                            if (progress == null) {
+                              return child;
+                            }
+                            return const Center(child: CircularProgressIndicator());
+                          },
+                          errorBuilder: (context, error, stackTrace) {
+                            return Container(
+                              color: Colors.black12,
+                              alignment: Alignment.center,
+                              child: const Text('Unable to load bill image'),
+                            );
+                          },
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                  ],
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Close'),
+            ),
+          ],
+        );
+      },
     );
   }
 }
@@ -440,7 +473,7 @@ class _TransactionItem {
     return _TransactionItem(
       id: row['id']?.toString() ?? UniqueKey().toString(),
       title: row['description']?.toString() ?? 'Expense',
-      date: _parseDate(row['expense_date']),
+      date: _parseDate(row['created_at'] ?? row['expense_date']),
       amount: amount,
       isCredit: isCredit,
       subtitle: counterparty,
@@ -451,38 +484,6 @@ class _TransactionItem {
       settlementStatus: null,
       paymentMethod: null,
       typeLabel: 'Expense',
-    );
-  }
-
-  factory _TransactionItem.fromSettlementRow(dynamic row, String currentUserId) {
-    final amount = _asDouble(row['amount']);
-    final payerId = row['payer_user_id']?.toString() ?? '';
-    final receiverId = row['receiver_user_id']?.toString() ?? '';
-    final groupName = (row['group'] as Map?)?['name']?.toString() ?? '';
-
-    final isCredit = receiverId == currentUserId;
-    final counterpartyLabel = isCredit
-        ? 'Settled by ${_shortId(payerId)}'
-        : 'Settled with ${_shortId(receiverId)}';
-
-    final status = row['status']?.toString();
-    final method = row['method']?.toString();
-    final notes = row['notes']?.toString() ?? '';
-
-    return _TransactionItem(
-      id: row['id']?.toString() ?? UniqueKey().toString(),
-      title: 'Settlement',
-      date: _parseDate(row['created_at']),
-      amount: amount,
-      isCredit: isCredit,
-      subtitle: counterpartyLabel,
-      counterpartyLabel: counterpartyLabel,
-      groupName: groupName,
-      details: notes,
-      billImageUrl: null,
-      settlementStatus: status,
-      paymentMethod: method,
-      typeLabel: 'Settlement',
     );
   }
 }
@@ -537,7 +538,3 @@ double _asDouble(dynamic value) {
   return parsed ?? 0;
 }
 
-String _shortId(String id) {
-  if (id.length <= 10) return id;
-  return '${id.substring(0, 6)}...${id.substring(id.length - 4)}';
-}
