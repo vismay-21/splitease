@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:app_links/app_links.dart';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:splitease/screens/unqually_screen.dart';
 import 'package:splitease/utils/algo.dart';
 import 'package:splitease/utils/upi_deepLink.dart';
 
@@ -1985,19 +1986,10 @@ class _GroupsScreenState extends State<GroupsScreen>
                                     ),
                                   ),
                                 ] else ...[
-                                  Container(
-                                    width: double.infinity,
-                                    padding: const EdgeInsets.all(12),
-                                    decoration: BoxDecoration(
-                                      color: const Color(0xFFF4F8FC),
-                                      borderRadius: BorderRadius.circular(10),
-                                    ),
-                                    child: Text(
-                                      'Unequal split setup will be added next.',
-                                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                                            color: const Color(0xFF5A6E82),
-                                          ),
-                                    ),
+                                  UnquallyScreen(
+                                    memberNames: members
+                                        .map((member) => member.displayName)
+                                        .toList(),
                                   ),
                                 ],
                               ],
