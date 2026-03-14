@@ -56,5 +56,11 @@
 			</array>
 		</dict>
 	</array>
+	<key>NSCameraUsageDescription</key>
+	<string>Camera access is needed to scan receipt images for expense splitting.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Photo library access is needed to import receipt images for expense splitting.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>Photo library write access may be used for receipt scan workflows.</string>
 </dict>
 </plist>
