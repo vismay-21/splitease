@@ -528,3 +528,183 @@ String _shortId(String id) {
   if (id.length <= 10) return id;
   return '${id.substring(0, 6)}...${id.substring(id.length - 4)}';
 }
+
+class _DetailRow extends StatelessWidget {
+  const _DetailRow({required this.label, required this.value});
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SizedBox(
+          width: 88,
+          child: Text(
+            label,
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: Colors.black54,
+                  fontWeight: FontWeight.w600,
+                ),
+          ),
+        ),
+        Expanded(
+          child: Text(
+            value,
+            style: Theme.of(context).textTheme.bodyMedium,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _TransactionItem {
+  _TransactionItem({
+    required this.id,
+    required this.title,
+    required this.date,
+    required this.amount,
+    required this.isCredit,
+    required this.subtitle,
+    required this.counterpartyLabel,
+    required this.groupName,
+    required this.details,
+    this.billImageUrl,
+    this.settlementStatus,
+    this.paymentMethod,
+    required this.typeLabel,
+  });
+
+  final String id;
+  final String title;
+  final DateTime date;
+  final double amount;
+  final bool isCredit;
+  final String subtitle;
+  final String counterpartyLabel;
+  final String groupName;
+  final String details;
+  final String? billImageUrl;
+  final String? settlementStatus;
+  final String? paymentMethod;
+  final String typeLabel;
+
+  factory _TransactionItem.fromExpenseRow(dynamic row, String currentUserId) {
+    final amount = _asDouble(row['amount']);
+    final paidByUserId = row['paid_by_user_id']?.toString() ?? '';
+    final putativeName = row['paid_by_name']?.toString() ?? 'Unknown';
+    final groupName = (row['group'] as Map?)?['name']?.toString() ?? '';
+    final owesSummary = row['owes_summary']?.toString() ?? '';
+    final billImageUrl = row['bill_image_url']?.toString();
+
+    final isCredit = paidByUserId != currentUserId;
+
+    final counterparty = isCredit ? 'Paid by $putativeName' : 'Split with group';
+
+    return _TransactionItem(
+      id: row['id']?.toString() ?? UniqueKey().toString(),
+      title: row['description']?.toString() ?? 'Expense',
+      date: _parseDate(row['expense_date']),
+      amount: amount,
+      isCredit: isCredit,
+      subtitle: counterparty,
+      counterpartyLabel: counterparty,
+      groupName: groupName,
+      details: owesSummary,
+      billImageUrl: billImageUrl,
+      settlementStatus: null,
+      paymentMethod: null,
+      typeLabel: 'Expense',
+    );
+  }
+
+  factory _TransactionItem.fromSettlementRow(dynamic row, String currentUserId) {
+    final amount = _asDouble(row['amount']);
+    final payerId = row['payer_user_id']?.toString() ?? '';
+    final receiverId = row['receiver_user_id']?.toString() ?? '';
+    final groupName = (row['group'] as Map?)?['name']?.toString() ?? '';
+
+    final isCredit = receiverId == currentUserId;
+    final counterpartyLabel = isCredit
+        ? 'Settled by ${_shortId(payerId)}'
+        : 'Settled with ${_shortId(receiverId)}';
+
+    final status = row['status']?.toString();
+    final method = row['method']?.toString();
+    final notes = row['notes']?.toString() ?? '';
+
+    return _TransactionItem(
+      id: row['id']?.toString() ?? UniqueKey().toString(),
+      title: 'Settlement',
+      date: _parseDate(row['created_at']),
+      amount: amount,
+      isCredit: isCredit,
+      subtitle: counterpartyLabel,
+      counterpartyLabel: counterpartyLabel,
+      groupName: groupName,
+      details: notes,
+      billImageUrl: null,
+      settlementStatus: status,
+      paymentMethod: method,
+      typeLabel: 'Settlement',
+    );
+  }
+}
+
+String _formatAmount(double amount) {
+  return amount.toStringAsFixed(2);
+}
+
+String _formatDateTime(DateTime dateTime) {
+  final local = dateTime.toLocal();
+  return '${_monthName(local.month)} ${local.day}, ${local.year} · ${_pad(local.hour)}:${_pad(local.minute)}';
+}
+
+String _monthName(int month) {
+  const names = [
+    'Jan',
+    'Feb',
+    'Mar',
+    'Apr',
+    'May',
+    'Jun',
+    'Jul',
+    'Aug',
+    'Sep',
+    'Oct',
+    'Nov',
+    'Dec',
+  ];
+  return names[month - 1];
+}
+
+String _pad(int value) => value.toString().padLeft(2, '0');
+
+DateTime _parseDate(dynamic value) {
+  if (value == null) return DateTime.now();
+  if (value is DateTime) return value;
+  try {
+    return DateTime.parse(value.toString()).toLocal();
+  } catch (_) {
+    return DateTime.now();
+  }
+}
+
+double _asDouble(dynamic value) {
+  if (value == null) {
+    return 0;
+  }
+  if (value is num) {
+    return value.toDouble();
+  }
+  final parsed = double.tryParse(value.toString());
+  return parsed ?? 0;
+}
+
+String _shortId(String id) {
+  if (id.length <= 10) return id;
+  return '${id.substring(0, 6)}...${id.substring(id.length - 4)}';
+}

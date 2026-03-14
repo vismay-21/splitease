@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'dart:ui'; // For BackdropFilter if you want glassmorphism, though we'll use solid soft colors
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
@@ -17,8 +16,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   Map<String, dynamic> get _userMetadata =>
       _client.auth.currentUser?.userMetadata ?? {};
 
-  String get _username =>
-      _userMetadata['full_name'] as String? ?? 'Your Name';
+  String get _username => _userMetadata['full_name'] as String? ?? 'Your Name';
   String get _email => _client.auth.currentUser?.email ?? 'you@example.com';
   String get _upiId => _userMetadata['upi_id'] as String? ?? 'you@bank';
 
@@ -51,11 +49,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
               Expanded(
                 child: ListView(
                   physics: const BouncingScrollPhysics(),
-                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 20,
+                    vertical: 12,
+                  ),
                   children: [
                     _buildIdentitySection(context),
-                    const SizedBox(height: 16),
-                    _buildUpiSection(context),
                     const SizedBox(height: 16),
                     _buildSettingsSection(context),
                     const SizedBox(height: 40), // Bottom padding
@@ -72,28 +71,15 @@ class _ProfileScreenState extends State<ProfileScreen> {
   Widget _buildHeader() {
     return Padding(
       padding: const EdgeInsets.fromLTRB(24, 16, 24, 12),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Text(
-            'Your profile\ninsights',
-            style: TextStyle(
-              fontSize: 34,
-              height: 1.1,
-              fontWeight: FontWeight.w400,
-              color: textDark,
-              letterSpacing: -1.2,
-            ),
-          ),
-          Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: cardColor.withOpacity(0.5),
-              shape: BoxShape.circle,
-            ),
-            child: Icon(Icons.menu, color: textDark),
-          )
-        ],
+      child: Text(
+        'Your profile',
+        style: TextStyle(
+          fontSize: 34,
+          height: 1.1,
+          fontWeight: FontWeight.w400,
+          color: textDark,
+          letterSpacing: -1.2,
+        ),
       ),
     );
   }
@@ -109,7 +95,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
             color: primaryBlue.withOpacity(0.15),
             blurRadius: 24,
             offset: const Offset(0, 8),
-          )
+          ),
         ],
       ),
       child: Row(
@@ -121,7 +107,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
               color: primaryBlue,
               shape: BoxShape.circle,
               image: const DecorationImage(
-                image: NetworkImage('https://i.pravatar.cc/150?img=11'), // Placeholder mimicking the avatar
+                image: NetworkImage(
+                  'https://i.pravatar.cc/150?img=11',
+                ), // Placeholder mimicking the avatar
                 fit: BoxFit.cover,
               ),
             ),
@@ -158,145 +146,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
               shape: BoxShape.circle,
             ),
             child: IconButton(
-              icon: const Icon(Icons.edit_outlined, color: Colors.white, size: 20),
+              icon: const Icon(
+                Icons.edit_outlined,
+                color: Colors.white,
+                size: 20,
+              ),
               onPressed: () => _showEditProfileDialog(context),
             ),
-          )
-        ],
-      ),
-    );
-  }
-
-  Widget _buildUpiSection(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(24),
-      decoration: BoxDecoration(
-        color: cardColor,
-        borderRadius: BorderRadius.circular(36),
-        boxShadow: [
-          BoxShadow(
-            color: primaryBlue.withOpacity(0.15),
-            blurRadius: 24,
-            offset: const Offset(0, 8),
-          )
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-            decoration: BoxDecoration(
-              color: primaryBlue,
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Text(
-              'UPI Details',
-              style: TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
-                color: textDark,
-              ),
-            ),
-          ),
-          const SizedBox(height: 20),
-          Row(
-            children: [
-              Expanded(
-                child: GestureDetector(
-                  onTap: () => _showQrDialog(context),
-                  child: Container(
-                    height: 130,
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(24),
-                      color: bgGradientStart,
-                    ),
-                    child: Center(
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(Icons.qr_code_rounded, size: 40, color: textDark),
-                          const SizedBox(height: 12),
-                          Text(
-                            'Show QR',
-                            style: TextStyle(
-                              color: textDark,
-                              fontWeight: FontWeight.w500,
-                              fontSize: 14,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 16),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Pay to',
-                      style: TextStyle(
-                        fontWeight: FontWeight.w400,
-                        color: textSoft,
-                        fontSize: 14,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      _upiId,
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w600,
-                        color: textDark,
-                        letterSpacing: -0.5,
-                      ),
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    const SizedBox(height: 16),
-                    GestureDetector(
-                      onTap: () async {
-                        await Clipboard.setData(ClipboardData(text: _upiId));
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: const Text('UPI ID copied to clipboard'),
-                            behavior: SnackBarBehavior.floating,
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                            backgroundColor: primaryDark,
-                          ),
-                        );
-                      },
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                        decoration: BoxDecoration(
-                          color: primaryDark,
-                          borderRadius: BorderRadius.circular(20),
-                        ),
-                        alignment: Alignment.center,
-                        child: const Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(Icons.copy_rounded, color: Colors.white, size: 16),
-                            SizedBox(width: 8),
-                            Text(
-                              'Copy ID',
-                              style: TextStyle(
-                                color: Colors.white,
-                                fontWeight: FontWeight.w600,
-                                fontSize: 14,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
           ),
         ],
       ),
@@ -314,11 +170,31 @@ class _ProfileScreenState extends State<ProfileScreen> {
             color: primaryBlue.withOpacity(0.15),
             blurRadius: 24,
             offset: const Offset(0, 8),
-          )
+          ),
         ],
       ),
       child: Column(
         children: [
+          _buildSettingsTile(
+            context,
+            icon: Icons.account_balance_wallet_outlined,
+            title: 'UPI ID: $_upiId',
+            onTap: () async {
+              await Clipboard.setData(ClipboardData(text: _upiId));
+              if (!context.mounted) {
+                return;
+              }
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: const Text('UPI ID copied to clipboard'),
+                  behavior: SnackBarBehavior.floating,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                ),
+              );
+            },
+          ),
           _buildSettingsTile(
             context,
             icon: Icons.lock_outline_rounded,
@@ -412,66 +288,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
-  // DIALOGS STYLED TO MATCH
-  void _showQrDialog(BuildContext context) {
-    showDialog(
-      context: context,
-      builder: (context) => Dialog(
-        backgroundColor: cardColor,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(36)),
-        child: Padding(
-          padding: const EdgeInsets.all(32),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                'Receive Funds',
-                style: TextStyle(
-                  fontSize: 22,
-                  fontWeight: FontWeight.w600,
-                  color: textDark,
-                  letterSpacing: -0.5,
-                ),
-              ),
-              const SizedBox(height: 24),
-              Container(
-                height: 220,
-                width: 220,
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(24),
-                  color: bgGradientStart,
-                ),
-                child: Center(
-                  child: Icon(Icons.qr_code_2_rounded, size: 140, color: textDark),
-                ),
-              ),
-              const SizedBox(height: 32),
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton(
-                  onPressed: () => Navigator.of(context).pop(),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: primaryDark,
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 18),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(24),
-                    ),
-                    elevation: 0,
-                  ),
-                  child: const Text(
-                    'Close',
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
   void _showEditProfileDialog(BuildContext context) {
     final nameController = TextEditingController(text: _username);
     final emailController = TextEditingController(text: _email);
@@ -514,7 +330,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
                           padding: const EdgeInsets.symmetric(vertical: 16),
                           foregroundColor: textSoft,
                         ),
-                        child: const Text('Cancel', style: TextStyle(fontSize: 16)),
+                        child: const Text(
+                          'Cancel',
+                          style: TextStyle(fontSize: 16),
+                        ),
                       ),
                     ),
                     const SizedBox(width: 12),
@@ -533,7 +352,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
                           ),
                           elevation: 0,
                         ),
-                        child: const Text('Save', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+                        child: const Text(
+                          'Save',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
                       ),
                     ),
                   ],
@@ -573,11 +398,23 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   ),
                 ),
                 const SizedBox(height: 24),
-                _buildModernTextField('Current Password', currentController, obscure: true),
+                _buildModernTextField(
+                  'Current Password',
+                  currentController,
+                  obscure: true,
+                ),
                 const SizedBox(height: 16),
-                _buildModernTextField('New Password', newController, obscure: true),
+                _buildModernTextField(
+                  'New Password',
+                  newController,
+                  obscure: true,
+                ),
                 const SizedBox(height: 16),
-                _buildModernTextField('Confirm New', confirmController, obscure: true),
+                _buildModernTextField(
+                  'Confirm New',
+                  confirmController,
+                  obscure: true,
+                ),
                 const SizedBox(height: 32),
                 Row(
                   children: [
@@ -588,15 +425,18 @@ class _ProfileScreenState extends State<ProfileScreen> {
                           padding: const EdgeInsets.symmetric(vertical: 16),
                           foregroundColor: textSoft,
                         ),
-                        child: const Text('Cancel', style: TextStyle(fontSize: 16)),
+                        child: const Text(
+                          'Cancel',
+                          style: TextStyle(fontSize: 16),
+                        ),
                       ),
                     ),
                     const SizedBox(width: 12),
                     Expanded(
                       child: ElevatedButton(
                         onPressed: () async {
-                           // Password logic
-                           Navigator.of(context).pop();
+                          // Password logic
+                          Navigator.of(context).pop();
                         },
                         style: ElevatedButton.styleFrom(
                           backgroundColor: primaryDark,
@@ -607,7 +447,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
                           ),
                           elevation: 0,
                         ),
-                        child: const Text('Update', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+                        child: const Text(
+                          'Update',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
                       ),
                     ),
                   ],
@@ -621,7 +467,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   // Helper for styling TextFields cleanly like the rest of the UI
-  Widget _buildModernTextField(String label, TextEditingController controller, {bool obscure = false}) {
+  Widget _buildModernTextField(
+    String label,
+    TextEditingController controller, {
+    bool obscure = false,
+  }) {
     return TextField(
       controller: controller,
       obscureText: obscure,
@@ -635,7 +485,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
           borderRadius: BorderRadius.circular(20),
           borderSide: BorderSide.none,
         ),
-        contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: 20,
+          vertical: 18,
+        ),
       ),
     );
   }
