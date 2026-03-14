@@ -341,7 +341,7 @@ class _UnquallyScreenState extends State<UnquallyScreen> {
                 ),
                 const SizedBox(height: 10),
                 Text(
-                  'Who ate this item?',
+                  'Participants:',
                   style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                         fontWeight: FontWeight.w600,
                       ),
