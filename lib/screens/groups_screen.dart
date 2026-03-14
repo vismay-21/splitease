@@ -11,6 +11,8 @@ final _fakeGroups = [
     name: 'Trip to Goa',
     icon: 'airplanemode_active',
     createdByUserId: 'Ayaan K.',
+    createdByName: 'Ayaan K.',
+    createdAt: DateTime(2026, 3, 1),
     totalExpenses: 1890.50,
     totalOwed: 560.25,
     balance: -250.50,
@@ -22,6 +24,8 @@ final _fakeGroups = [
     name: 'Room Rent',
     icon: 'home',
     createdByUserId: 'Sneh',
+    createdByName: 'Sneh',
+    createdAt: DateTime(2026, 3, 2),
     totalExpenses: 3450.00,
     totalOwed: 1000.00,
     balance: 280.75,
@@ -38,6 +42,8 @@ class _GroupTransaction {
     required this.amount,
     required this.isCredit,
     required this.icon,
+    this.expenseDetails,
+    this.settlementDetails,
   });
 
   final String date;
@@ -46,16 +52,83 @@ class _GroupTransaction {
   final double amount;
   final bool isCredit;
   final IconData icon;
+  final _ExpenseTransactionDetails? expenseDetails;
+  final _SettlementTransactionDetails? settlementDetails;
+}
+
+class _ExpenseTransactionDetails {
+  const _ExpenseTransactionDetails({
+    required this.expenseName,
+    required this.totalAmount,
+    required this.paidBy,
+    required this.participants,
+  });
+
+  final String expenseName;
+  final double totalAmount;
+  final List<_PaidByLine> paidBy;
+  final List<String> participants;
+}
+
+class _PaidByLine {
+  const _PaidByLine({required this.memberName, required this.amount});
+
+  final String memberName;
+  final double amount;
+}
+
+class _SettlementTransactionDetails {
+  const _SettlementTransactionDetails({
+    required this.debtorUserId,
+    required this.debtorName,
+    required this.creditorUserId,
+    required this.creditorName,
+    required this.amountCents,
+  });
+
+  final String debtorUserId;
+  final String debtorName;
+  final String creditorUserId;
+  final String creditorName;
+  final int amountCents;
+}
+
+class _CounterpartyLedgerLine {
+  const _CounterpartyLedgerLine({
+    required this.fromName,
+    required this.toName,
+    required this.amountCents,
+  });
+
+  final String fromName;
+  final String toName;
+  final int amountCents;
+}
+
+class _SettleUpSummary {
+  _SettleUpSummary({
+    required this.counterpartyUserId,
+    required this.counterpartyName,
+    required this.netCents,
+    required this.ledgerLines,
+  });
+
+  final String counterpartyUserId;
+  final String counterpartyName;
+  int netCents;
+  final List<_CounterpartyLedgerLine> ledgerLines;
 }
 
 class _SettleMember {
   _SettleMember({
     required this.name,
     required this.balance,
+    this.upiId,
   });
 
   final String name;
   double balance;
+  final String? upiId;
 }
 
 const _fakeTransactions = [
@@ -123,6 +196,7 @@ class _GroupsScreenState extends State<GroupsScreen>
   String? _loadError;
   List<GroupSummary> _groups = <GroupSummary>[];
   List<GroupInvitation> _pendingInvitations = <GroupInvitation>[];
+  final Map<String, List<_GroupTransaction>> _groupPreviewTransactions = {};
   AnimationController? _fabEntranceController;
 
   User? get _currentUser => _client.auth.currentUser;
@@ -222,19 +296,60 @@ class _GroupsScreenState extends State<GroupsScreen>
       _loadError = null;
     });
 
-    // Simulate a short loading delay.
-    await Future.delayed(const Duration(milliseconds: 250));
+    try {
+      final user = _currentUser;
+      if (user == null) {
+        if (!mounted) {
+          return;
+        }
 
-    if (!mounted) return;
+        setState(() {
+          _groups = <GroupSummary>[];
+          _pendingInvitations = <GroupInvitation>[];
+          _isLoading = false;
+          _hasLoadedOnce = true;
+          _cachedGroups = List<GroupSummary>.from(_groups);
+          _cachedInvitations = List<GroupInvitation>.from(_pendingInvitations);
+        });
+        return;
+      }
 
-    setState(() {
-      _groups = List<GroupSummary>.from(_fakeGroups);
-      _pendingInvitations = [];
-      _isLoading = false;
-      _hasLoadedOnce = true;
-      _cachedGroups = List<GroupSummary>.from(_groups);
-      _cachedInvitations = List<GroupInvitation>.from(_pendingInvitations);
-    });
+      final groups = await _fetchGroupsForUser(user.id);
+      final invitations = await _fetchPendingInvitations(user.email);
+
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _groups = groups;
+        _pendingInvitations = invitations;
+        _isLoading = false;
+        _hasLoadedOnce = true;
+        _cachedGroups = List<GroupSummary>.from(_groups);
+        _cachedInvitations = List<GroupInvitation>.from(_pendingInvitations);
+      });
+    } on PostgrestException catch (error) {
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _isLoading = false;
+        _hasLoadedOnce = true;
+        _loadError = 'Could not load groups (${error.message}).';
+      });
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _isLoading = false;
+        _hasLoadedOnce = true;
+        _loadError = 'Unable to load groups right now.';
+      });
+    }
   }
 
   Future<List<GroupSummary>> _fetchGroupsForUser(String userId) async {
@@ -254,10 +369,13 @@ class _GroupsScreenState extends State<GroupsScreen>
 
     final groupRows = await _client
         .from('groups')
-      .select('id,name,icon,created_by,total_expenses,total_owed,balance,settlement_status')
+        .select(
+          'id,name,icon,created_by,created_at,total_expenses,total_owed,balance,settlement_status',
+        )
         .inFilter('id', groupIds) as List<dynamic>;
 
     final memberCounts = await _fetchMemberCounts(groupIds);
+    final creatorNames = await _fetchCreatorNames(groupIds);
 
     final summaries = <GroupSummary>[];
     for (final row in groupRows) {
@@ -272,6 +390,9 @@ class _GroupsScreenState extends State<GroupsScreen>
           name: row['name']?.toString() ?? 'Unnamed Group',
           icon: row['icon']?.toString() ?? 'group',
           createdByUserId: row['created_by']?.toString() ?? '',
+          createdByName: _creatorNameFor(row, creatorNames),
+          createdAt: DateTime.tryParse(row['created_at']?.toString() ?? '')?.toLocal() ??
+              DateTime.now(),
           totalExpenses: _asDouble(row['total_expenses']),
           totalOwed: _asDouble(row['total_owed']),
           balance: _asDouble(row['balance']),
@@ -283,6 +404,94 @@ class _GroupsScreenState extends State<GroupsScreen>
 
     summaries.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
     return summaries;
+  }
+
+  Future<Map<String, String>> _fetchCreatorNames(List<String> groupIds) async {
+    final rows = await _client
+        .from('group_members')
+        .select('group_id,user_id,display_name')
+        .inFilter('group_id', groupIds) as List<dynamic>;
+
+    final namesByGroupAndUser = <String, String>{};
+    for (final row in rows) {
+      final groupId = row['group_id']?.toString() ?? '';
+      final userId = row['user_id']?.toString() ?? '';
+      final displayName = row['display_name']?.toString().trim() ?? '';
+      if (groupId.isEmpty || userId.isEmpty || displayName.isEmpty) {
+        continue;
+      }
+      namesByGroupAndUser['$groupId|$userId'] = displayName;
+    }
+
+    return namesByGroupAndUser;
+  }
+
+  String _creatorNameFor(Map<String, dynamic> row, Map<String, String> creatorNames) {
+    final groupId = row['id']?.toString() ?? '';
+    final creatorId = row['created_by']?.toString() ?? '';
+    final currentUser = _currentUser;
+
+    if (currentUser != null && creatorId == currentUser.id) {
+      return _currentUserPreferredName(currentUser);
+    }
+
+    final name = creatorNames['$groupId|$creatorId'];
+    if (name != null && name.isNotEmpty) {
+      return _friendlyNameFromDisplayValue(name);
+    }
+
+    if (creatorId.isEmpty) {
+      return 'Unknown';
+    }
+
+    return creatorId.length <= 10 ? creatorId : creatorId.substring(0, 10);
+  }
+
+  String _currentUserPreferredName(User user) {
+    final metadata = user.userMetadata ?? <String, dynamic>{};
+    final candidates = [
+      metadata['full_name']?.toString(),
+      metadata['name']?.toString(),
+      metadata['display_name']?.toString(),
+      metadata['preferred_username']?.toString(),
+      metadata['user_name']?.toString(),
+    ];
+
+    for (final candidate in candidates) {
+      final normalized = _friendlyNameFromDisplayValue(candidate);
+      if (normalized.isNotEmpty) {
+        return normalized;
+      }
+    }
+
+    final emailName = _friendlyNameFromDisplayValue(user.email);
+    return emailName.isEmpty ? 'You' : emailName;
+  }
+
+  String _friendlyNameFromDisplayValue(String? value) {
+    final raw = value?.trim() ?? '';
+    if (raw.isEmpty) {
+      return '';
+    }
+
+    // If display value is an email, show only the username part.
+    final username = raw.contains('@') ? raw.split('@').first : raw;
+    if (username.isEmpty) {
+      return '';
+    }
+
+    final cleaned = username.replaceAll(RegExp(r'[._-]+'), ' ').trim();
+    if (cleaned.isEmpty) {
+      return username;
+    }
+
+    final words = cleaned
+        .split(RegExp(r'\s+'))
+        .where((word) => word.isNotEmpty)
+        .map((word) => word[0].toUpperCase() + word.substring(1).toLowerCase())
+        .toList();
+
+    return words.isEmpty ? username : words.join(' ');
   }
 
   Future<Map<String, int>> _fetchMemberCounts(List<String> groupIds) async {
@@ -384,6 +593,29 @@ class _GroupsScreenState extends State<GroupsScreen>
       monthlySpending: monthly,
       totalTransactions: expenses.length,
     );
+  }
+
+  Future<String?> _fetchMemberUpiId(String groupId, String userId) async {
+    if (groupId.isEmpty || userId.isEmpty) {
+      return null;
+    }
+
+    try {
+      final row = await _client
+          .from('group_members')
+          .select('upi_id')
+          .eq('group_id', groupId)
+          .eq('user_id', userId)
+          .maybeSingle();
+
+      final upiId = row?['upi_id']?.toString().trim();
+      if (upiId == null || upiId.isEmpty) {
+        return null;
+      }
+      return upiId;
+    } catch (_) {
+      return null;
+    }
   }
 
   Future<void> _openGroupSectionPopup({
@@ -511,23 +743,32 @@ class _GroupsScreenState extends State<GroupsScreen>
       builder: (context) {
         final maxHeight = MediaQuery.of(context).size.height * 0.82;
         final maxWidth = MediaQuery.of(context).size.width * 0.92;
-        final createdDate = 'Apr 04, 2024';
+        final createdDate = _formatDate(group.createdAt);
+        var transactions = List<_GroupTransaction>.from(
+          _groupPreviewTransactions[group.id] ?? _fakeTransactions,
+        );
+        var selectedSection = 'transactions';
 
-        return Dialog(
-          insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
-          backgroundColor: Colors.transparent,
-          child: SizedBox(
-            height: maxHeight,
-            width: maxWidth,
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(26),
-              child: Material(
-                color: Colors.white,
-                child: SingleChildScrollView(
-                  physics: const BouncingScrollPhysics(),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
+        return StatefulBuilder(
+          builder: (context, setModalState) {
+            return Dialog(
+              insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
+              backgroundColor: Colors.transparent,
+              child: SizedBox(
+                height: maxHeight,
+                width: maxWidth,
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(26),
+                  child: Material(
+                    color: Colors.white,
+                    child: Stack(
+                      children: [
+                    SingleChildScrollView(
+                      physics: const BouncingScrollPhysics(),
+                      padding: const EdgeInsets.only(bottom: 84),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
                       // Header
                       Padding(
                         padding: const EdgeInsets.fromLTRB(20, 20, 20, 16),
@@ -563,13 +804,39 @@ class _GroupsScreenState extends State<GroupsScreen>
                                       ),
                                     ),
                                     const SizedBox(width: 12),
-                                    CircleAvatar(
-                                      radius: 28,
-                                      backgroundColor: const Color(0xFFD8ECFA),
-                                      foregroundColor: const Color(0xFF1D6CAB),
-                                      child: Icon(
-                                        _GroupBar._iconFor(group.icon),
-                                        size: 28,
+                                    InkWell(
+                                      borderRadius: BorderRadius.circular(28),
+                                      onTap: () => _openMembersDirectoryPopup(group),
+                                      child: Stack(
+                                        clipBehavior: Clip.none,
+                                        children: [
+                                          CircleAvatar(
+                                            radius: 28,
+                                            backgroundColor: const Color(0xFFD8ECFA),
+                                            foregroundColor: const Color(0xFF1D6CAB),
+                                            child: Icon(
+                                              _GroupBar._iconFor(group.icon),
+                                              size: 28,
+                                            ),
+                                          ),
+                                          Positioned(
+                                            right: -2,
+                                            bottom: -2,
+                                            child: Container(
+                                              padding: const EdgeInsets.all(4),
+                                              decoration: BoxDecoration(
+                                                color: const Color(0xFF1A4A8F),
+                                                borderRadius: BorderRadius.circular(10),
+                                                border: Border.all(color: Colors.white, width: 1.5),
+                                              ),
+                                              child: const Icon(
+                                                Icons.edit,
+                                                size: 12,
+                                                color: Colors.white,
+                                              ),
+                                            ),
+                                          ),
+                                        ],
                                       ),
                                     ),
                                   ],
@@ -580,7 +847,7 @@ class _GroupsScreenState extends State<GroupsScreen>
                                     const Icon(Icons.person, size: 18, color: Color(0xFF5A6E82)),
                                     const SizedBox(width: 6),
                                     Text(
-                                      'Created by ${group.createdByUserId}',
+                                      'Created by ${group.createdByName}',
                                       style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                                             color: const Color(0xFF5A6E82),
                                           ),
@@ -651,36 +918,53 @@ class _GroupsScreenState extends State<GroupsScreen>
                       ),
                       const Divider(height: 1),
 
-                      // Buttons
+                      // Section toggle
                       Padding(
                         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                         child: Row(
                           children: [
                             Expanded(
-                              child: FilledButton(
-                                onPressed: () => _openSettleUpPopup(group),
-                                style: FilledButton.styleFrom(
-                                  backgroundColor: const Color(0xFF1A4A8F),
-                                  padding: const EdgeInsets.symmetric(vertical: 12),
+                              child: ChoiceChip(
+                                label: const SizedBox(
+                                  width: double.infinity,
+                                  child: Text('Transactions', textAlign: TextAlign.center),
                                 ),
-                                child: const Text(
-                                  'Settle up',
-                                  style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700),
-                                ),
+                                selected: selectedSection == 'transactions',
+                                onSelected: (_) {
+                                  setModalState(() {
+                                    selectedSection = 'transactions';
+                                  });
+                                },
                               ),
                             ),
-                            const SizedBox(width: 12),
+                            const SizedBox(width: 8),
                             Expanded(
-                              child: FilledButton(
-                                onPressed: () => _showEmptyDialog(context, 'Balances'),
-                                style: FilledButton.styleFrom(
-                                  backgroundColor: const Color(0xFF1A4A8F),
-                                  padding: const EdgeInsets.symmetric(vertical: 12),
+                              child: ChoiceChip(
+                                label: const SizedBox(
+                                  width: double.infinity,
+                                  child: Text('Balances', textAlign: TextAlign.center),
                                 ),
-                                child: const Text(
-                                  'Balances',
-                                  style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700),
+                                selected: selectedSection == 'balances',
+                                onSelected: (_) {
+                                  setModalState(() {
+                                    selectedSection = 'balances';
+                                  });
+                                },
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: ChoiceChip(
+                                label: const SizedBox(
+                                  width: double.infinity,
+                                  child: Text('Settle up', textAlign: TextAlign.center),
                                 ),
+                                selected: selectedSection == 'settleup',
+                                onSelected: (_) {
+                                  setModalState(() {
+                                    selectedSection = 'settleup';
+                                  });
+                                },
                               ),
                             ),
                           ],
@@ -688,28 +972,73 @@ class _GroupsScreenState extends State<GroupsScreen>
                       ),
                       const Divider(height: 1),
 
-                      // Transactions list section
-                      Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                        child: ListView.separated(
-                          shrinkWrap: true,
-                          physics: const NeverScrollableScrollPhysics(),
-                          itemCount: _fakeTransactions.length,
-                          separatorBuilder: (context, index) => const SizedBox(height: 10),
-                          itemBuilder: (context, index) {
-                            final transaction = _fakeTransactions[index];
-                            return _TransactionRow(
-                              transaction: transaction,
-                            );
-                          },
+                          // Section content
+                          Builder(
+                            builder: (context) {
+                              final expenseTransactions = transactions
+                                  .where((item) => item.expenseDetails != null)
+                                  .toList();
+                              final balanceTransactions = transactions
+                                  .where((item) => item.settlementDetails != null)
+                                  .toList();
+
+                              if (selectedSection == 'transactions') {
+                                return _buildGroupSectionTransactions(
+                                  items: expenseTransactions,
+                                  emptyText: 'No expense entries yet. Tap + to add one.',
+                                );
+                              }
+
+                              if (selectedSection == 'balances') {
+                                return _buildGroupSectionTransactions(
+                                  items: balanceTransactions,
+                                  emptyText: 'No balance splits yet.',
+                                );
+                              }
+
+                              return _buildInlineSettleUpSection(group, transactions);
+                            },
+                          ),
+                        ],
+                      ),
+                    ),
+                    Positioned(
+                      left: 0,
+                      right: 0,
+                      bottom: 14,
+                      child: Center(
+                        child: FloatingActionButton(
+                          heroTag: 'group-add-expense-${group.id}',
+                          backgroundColor: const Color(0xFF1A4A8F),
+                          foregroundColor: Colors.white,
+                          onPressed: () => _openAddExpenseDialog(
+                            group,
+                            onPreviewGenerated: (computedTransactions) {
+                              final existing = _groupPreviewTransactions[group.id] ?? <_GroupTransaction>[];
+                              final merged = <_GroupTransaction>[
+                                ...computedTransactions,
+                                ...existing,
+                              ];
+
+                              setState(() {
+                                _groupPreviewTransactions[group.id] = merged;
+                              });
+                              setModalState(() {
+                                transactions = List<_GroupTransaction>.from(merged);
+                              });
+                            },
+                          ),
+                          child: const Icon(Icons.add),
                         ),
                       ),
-                    ],
+                    ),
+                      ],
+                    ),
                   ),
                 ),
               ),
-            ),
-          ),
+            );
+          },
         );
       },
     );
@@ -884,9 +1213,18 @@ class _GroupsScreenState extends State<GroupsScreen>
                                                 onPressed: () async {
                                                   Navigator.of(context).pop();
 
+                                                  final recipientUpiId = member.upiId?.trim();
+                                                  if (recipientUpiId == null || recipientUpiId.isEmpty) {
+                                                    _showMessage(
+                                                      'UPI ID is missing for ${member.name}.',
+                                                    );
+                                                    return;
+                                                  }
+
                                                   final launched = await UpiDeepLink.launchUpiPayment(
                                                     receiverName: member.name,
                                                     amount: amount,
+                                                    recipientUpiId: recipientUpiId,
                                                     note: 'SpliTease ${group.name}',
                                                   );
 
@@ -1067,6 +1405,12 @@ class _GroupsScreenState extends State<GroupsScreen>
     GroupMemberBalance receiver,
     double amount,
   ) async {
+    final recipientUpiId = receiver.upiId?.trim();
+    if (recipientUpiId == null || recipientUpiId.isEmpty) {
+      _showMessage('UPI ID is missing for ${receiver.memberName}.');
+      return;
+    }
+
     final settlementId = await _recordSettlement(
       group.id,
       receiver.userId,
@@ -1088,7 +1432,7 @@ class _GroupsScreenState extends State<GroupsScreen>
     final launched = await UpiDeepLink.launchUpiPayment(
       receiverName: receiver.memberName,
       amount: amount,
-      recipientUpiId: receiver.upiId,
+      recipientUpiId: recipientUpiId,
       note: 'SpliTease ${group.name}',
       transactionRef: settlementId,
       callbackUrl: callbackUri,
@@ -1174,6 +1518,13 @@ class _GroupsScreenState extends State<GroupsScreen>
   Future<void> _openCreateGroupDialog() async {
     final nameController = TextEditingController();
     String selectedIcon = 'group';
+    final groupIcons = <MapEntry<String, String>>[
+      const MapEntry('group', 'Group'),
+      const MapEntry('food', 'Food'),
+      const MapEntry('flight', 'Trip'),
+      const MapEntry('home', 'Home'),
+      const MapEntry('sports', 'Sports'),
+    ];
 
     await showGeneralDialog<void>(
       context: context,
@@ -1185,7 +1536,7 @@ class _GroupsScreenState extends State<GroupsScreen>
         return StatefulBuilder(
           builder: (context, setModalState) {
             return AlertDialog(
-              title: const Text('Create Group'),
+              title: const Text('New Group'),
               content: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
@@ -1196,19 +1547,26 @@ class _GroupsScreenState extends State<GroupsScreen>
                   const SizedBox(height: 12),
                   DropdownButtonFormField<String>(
                     initialValue: selectedIcon,
-                    items: const [
-                      DropdownMenuItem(value: 'group', child: Text('Group')),
-                      DropdownMenuItem(value: 'food', child: Text('Food')),
-                      DropdownMenuItem(value: 'flight', child: Text('Trip')),
-                      DropdownMenuItem(value: 'home', child: Text('Home')),
-                      DropdownMenuItem(value: 'sports', child: Text('Sports')),
-                    ],
+                    items: groupIcons
+                        .map(
+                          (icon) => DropdownMenuItem<String>(
+                            value: icon.key,
+                            child: Row(
+                              children: [
+                                Icon(_GroupBar._iconFor(icon.key), size: 18),
+                                const SizedBox(width: 8),
+                                Text(icon.value),
+                              ],
+                            ),
+                          ),
+                        )
+                        .toList(),
                     onChanged: (value) {
                       if (value != null) {
                         setModalState(() => selectedIcon = value);
                       }
                     },
-                    decoration: const InputDecoration(labelText: 'Icon'),
+                    decoration: const InputDecoration(labelText: 'Group icon'),
                   ),
                 ],
               ),
@@ -1270,10 +1628,11 @@ class _GroupsScreenState extends State<GroupsScreen>
     }
   }
 
-  Future<void> _openAddExpenseDialog(GroupSummary group) async {
-    final descriptionController = TextEditingController();
-    final amountController = TextEditingController();
-    final summaryController = TextEditingController();
+  Future<void> _openAddExpenseDialog(
+    GroupSummary group, {
+    void Function(List<_GroupTransaction> transactions)? onPreviewGenerated,
+  }) async {
+    final expenseNameController = TextEditingController();
 
     try {
       final rows = await _client
@@ -1296,102 +1655,236 @@ class _GroupsScreenState extends State<GroupsScreen>
         return;
       }
 
-      if (!mounted) {
-        return;
-      }
+      final paidControllers = <String, TextEditingController>{
+        for (final member in members) member.userId: TextEditingController(text: '0'),
+      };
+      final includeMap = <String, bool>{
+        for (final member in members) member.userId: true,
+      };
+      var splitMode = 'equally';
 
-      String selectedPayer = _currentUser?.id ?? members.first.userId;
+      double totalPaid() {
+        var total = 0.0;
+        for (final controller in paidControllers.values) {
+          total += double.tryParse(controller.text.trim()) ?? 0;
+        }
+        return total;
+      }
 
       await showDialog<void>(
         context: context,
         builder: (context) {
+          final maxHeight = MediaQuery.of(context).size.height * 0.82;
+          final maxWidth = MediaQuery.of(context).size.width * 0.92;
+
           return StatefulBuilder(
             builder: (context, setModalState) {
-              return AlertDialog(
-                title: Text('Add Expense - ${group.name}'),
-                content: SingleChildScrollView(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      TextField(
-                        controller: descriptionController,
-                        decoration: const InputDecoration(labelText: 'Description'),
-                      ),
-                      const SizedBox(height: 10),
-                      TextField(
-                        controller: amountController,
-                        keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                        decoration: const InputDecoration(labelText: 'Amount'),
-                      ),
-                      const SizedBox(height: 10),
-                      DropdownButtonFormField<String>(
-                        initialValue: selectedPayer,
-                        items: members
-                            .map(
-                              (member) => DropdownMenuItem(
-                                value: member.userId,
-                                child: Text(member.displayName),
+              return Dialog(
+                insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
+                child: SizedBox(
+                  width: maxWidth,
+                  height: maxHeight,
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                'Add Expense - ${group.name}',
+                                style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                                      fontWeight: FontWeight.w700,
+                                    ),
                               ),
-                            )
-                            .toList(),
-                        onChanged: (value) {
-                          if (value != null) {
-                            setModalState(() => selectedPayer = value);
-                          }
-                        },
-                        decoration: const InputDecoration(labelText: 'Paid by'),
-                      ),
-                      const SizedBox(height: 10),
-                      TextField(
-                        controller: summaryController,
-                        decoration: const InputDecoration(
-                          labelText: 'Who owes whom (optional)',
-                          hintText: 'A owes B 200, C owes B 200',
+                            ),
+                            IconButton(
+                              onPressed: () => Navigator.of(context).pop(),
+                              icon: const Icon(Icons.close),
+                            ),
+                          ],
                         ),
-                      ),
-                    ],
+                        const SizedBox(height: 8),
+                        Expanded(
+                          child: SingleChildScrollView(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                TextField(
+                                  controller: expenseNameController,
+                                  decoration: const InputDecoration(labelText: 'Expense name'),
+                                ),
+                                const SizedBox(height: 14),
+                                Text(
+                                  'Amount paid by each member',
+                                  style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                                        fontWeight: FontWeight.w700,
+                                      ),
+                                ),
+                                const SizedBox(height: 8),
+                                ...members.map(
+                                  (member) => Padding(
+                                    padding: const EdgeInsets.only(bottom: 8),
+                                    child: Row(
+                                      children: [
+                                        Expanded(child: Text(member.displayName)),
+                                        const SizedBox(width: 10),
+                                        SizedBox(
+                                          width: 120,
+                                          child: TextField(
+                                            controller: paidControllers[member.userId],
+                                            keyboardType: const TextInputType.numberWithOptions(
+                                              decimal: true,
+                                            ),
+                                            onChanged: (_) => setModalState(() {}),
+                                            decoration: const InputDecoration(
+                                              labelText: 'Paid',
+                                              prefixText: '₹',
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(height: 6),
+                                Text(
+                                  'Total expense: ${_money(totalPaid())}',
+                                  style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                                        fontWeight: FontWeight.w700,
+                                        color: const Color(0xFF1A4A8F),
+                                      ),
+                                ),
+                                const SizedBox(height: 16),
+                                Row(
+                                  crossAxisAlignment: CrossAxisAlignment.center,
+                                  children: [
+                                    Expanded(
+                                      child: Text(
+                                        'How to split?',
+                                        style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                                              fontWeight: FontWeight.w700,
+                                            ),
+                                      ),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    ChoiceChip(
+                                      label: const Text('Equally'),
+                                      selected: splitMode == 'equally',
+                                      onSelected: (_) {
+                                        setModalState(() {
+                                          splitMode = 'equally';
+                                        });
+                                      },
+                                    ),
+                                    const SizedBox(width: 8),
+                                    ChoiceChip(
+                                      label: const Text('Unequally'),
+                                      selected: splitMode == 'unequally',
+                                      onSelected: (_) {
+                                        setModalState(() {
+                                          splitMode = 'unequally';
+                                        });
+                                      },
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 14),
+                                if (splitMode == 'equally') ...[
+                                  Text(
+                                    'Participants',
+                                    style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                                          fontWeight: FontWeight.w700,
+                                        ),
+                                  ),
+                                  const SizedBox(height: 8),
+                                  ...members.map(
+                                    (member) => CheckboxListTile(
+                                      dense: true,
+                                      contentPadding: EdgeInsets.zero,
+                                      title: Text(member.displayName),
+                                      value: includeMap[member.userId] ?? true,
+                                      onChanged: (value) {
+                                        setModalState(() {
+                                          includeMap[member.userId] = value ?? false;
+                                        });
+                                      },
+                                    ),
+                                  ),
+                                ] else ...[
+                                  Container(
+                                    width: double.infinity,
+                                    padding: const EdgeInsets.all(12),
+                                    decoration: BoxDecoration(
+                                      color: const Color(0xFFF4F8FC),
+                                      borderRadius: BorderRadius.circular(10),
+                                    ),
+                                    child: Text(
+                                      'Unequal split setup will be added next.',
+                                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                                            color: const Color(0xFF5A6E82),
+                                          ),
+                                    ),
+                                  ),
+                                ],
+                              ],
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                        Row(
+                          children: [
+                            TextButton(
+                              onPressed: () => Navigator.of(context).pop(),
+                              child: const Text('Cancel'),
+                            ),
+                            const Spacer(),
+                            FilledButton(
+                              onPressed: () {
+                                final expenseName = expenseNameController.text.trim();
+                                if (expenseName.isEmpty) {
+                                  _showMessage('Expense name is required.');
+                                  return;
+                                }
+
+                                if (splitMode == 'equally') {
+                                  final participantCount =
+                                      includeMap.values.where((included) => included).length;
+                                  if (participantCount == 0) {
+                                    _showMessage('Select at least one participant.');
+                                    return;
+                                  }
+                                }
+
+                                final paidByUserId = <String, double>{
+                                  for (final member in members)
+                                    member.userId: double.tryParse(
+                                          paidControllers[member.userId]?.text.trim() ?? '0',
+                                        ) ??
+                                        0,
+                                };
+
+                                final settlements = _buildSettlementPreviewTransactions(
+                                  expenseName: expenseName,
+                                  members: members,
+                                  paidByUserId: paidByUserId,
+                                  includeMap: includeMap,
+                                  currentUserId: _currentUser?.id,
+                                );
+
+                                onPreviewGenerated?.call(settlements);
+                                Navigator.of(context).pop();
+                                _showMessage('Expense split preview generated.');
+                              },
+                              child: const Text('Continue'),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
                   ),
                 ),
-                actions: [
-                  TextButton(
-                    onPressed: () => Navigator.of(context).pop(),
-                    child: const Text('Cancel'),
-                  ),
-                  FilledButton(
-                    onPressed: () async {
-                      final description = descriptionController.text.trim();
-                      final amount = double.tryParse(amountController.text.trim());
-                      if (description.isEmpty || amount == null || amount <= 0) {
-                        _showMessage('Enter valid description and amount.');
-                        return;
-                      }
-
-                      final payer = members.firstWhere(
-                        (member) => member.userId == selectedPayer,
-                        orElse: () => members.first,
-                      );
-
-                      await _client.rpc('add_group_expense_equal_split', params: {
-                        '_group_id': group.id,
-                        '_description': description,
-                        '_amount': amount,
-                        '_paid_by_user_id': payer.userId,
-                        '_owes_summary': summaryController.text.trim().isEmpty
-                            ? null
-                            : summaryController.text.trim(),
-                        '_bill_image_url': null,
-                      });
-
-                      if (!mounted) {
-                        return;
-                      }
-                      Navigator.of(this.context).pop();
-                      _showMessage('Expense added successfully.');
-                      await _loadData();
-                    },
-                    child: const Text('Add Expense'),
-                  ),
-                ],
               );
             },
           );
@@ -1402,6 +1895,569 @@ class _GroupsScreenState extends State<GroupsScreen>
     } catch (_) {
       _showMessage('Unable to add expense right now.');
     }
+  }
+
+  Future<void> _openExpenseTransactionDetailsDialog(
+    _ExpenseTransactionDetails details,
+  ) async {
+    await showDialog<void>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: Text(details.expenseName),
+          content: SizedBox(
+            width: 420,
+            child: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Total: ${_money(details.totalAmount)}',
+                    style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                          fontWeight: FontWeight.w700,
+                        ),
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    'Who paid what',
+                    style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                          fontWeight: FontWeight.w700,
+                        ),
+                  ),
+                  const SizedBox(height: 8),
+                  ...details.paidBy.map(
+                    (line) => Padding(
+                      padding: const EdgeInsets.only(bottom: 6),
+                      child: Row(
+                        children: [
+                          Expanded(child: Text(line.memberName)),
+                          Text(_money(line.amount)),
+                        ],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    'Participants',
+                    style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                          fontWeight: FontWeight.w700,
+                        ),
+                  ),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: details.participants
+                        .map(
+                          (name) => Chip(
+                            label: Text(name),
+                            backgroundColor: const Color(0xFFE9F4FF),
+                          ),
+                        )
+                        .toList(),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Close'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildGroupSectionTransactions({
+    required List<_GroupTransaction> items,
+    required String emptyText,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      child: items.isEmpty
+          ? Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF4F8FC),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Text(
+                emptyText,
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      color: const Color(0xFF5A6E82),
+                    ),
+              ),
+            )
+          : ListView.separated(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              itemCount: items.length,
+              separatorBuilder: (context, index) => const SizedBox(height: 10),
+              itemBuilder: (context, index) {
+                final transaction = items[index];
+                return _TransactionRow(
+                  transaction: transaction,
+                  onTap: transaction.expenseDetails == null
+                      ? null
+                      : () => _openExpenseTransactionDetailsDialog(
+                            transaction.expenseDetails!,
+                          ),
+                );
+              },
+            ),
+    );
+  }
+
+  Widget _buildInlineSettleUpSection(
+    GroupSummary group,
+    List<_GroupTransaction> transactions,
+  ) {
+    final currentUserId = _currentUser?.id;
+    if (currentUserId == null) {
+      return const SizedBox.shrink();
+    }
+
+    final summaries = _buildSettleUpSummaries(
+      transactions: transactions,
+      currentUserId: currentUserId,
+    );
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Settle up',
+            style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                  fontWeight: FontWeight.w800,
+                ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'Select a member to settle your balance',
+            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  color: const Color(0xFF5A6E82),
+                ),
+          ),
+          const SizedBox(height: 10),
+          if (summaries.isEmpty)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF4F8FC),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Text(
+                'No pending settlements yet.',
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      color: const Color(0xFF5A6E82),
+                    ),
+              ),
+            )
+          else
+            ListView.separated(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              itemCount: summaries.length,
+              separatorBuilder: (context, index) => const SizedBox(height: 10),
+              itemBuilder: (context, index) {
+                final summary = summaries[index];
+                final iOwe = summary.netCents > 0;
+                final owesMe = summary.netCents < 0;
+                final amount = (summary.netCents.abs()) / 100;
+              final subtitle = owesMe
+                  ? 'Owes you'
+                  : iOwe
+                      ? 'You owe'
+                      : 'Settled';
+
+              return Container(
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(18),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withAlpha(10),
+                      blurRadius: 10,
+                      offset: const Offset(0, 4),
+                    ),
+                  ],
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        CircleAvatar(
+                          radius: 20,
+                          backgroundColor: const Color(0xFFD8ECFA),
+                          foregroundColor: const Color(0xFF1D6CAB),
+                          child: Text(
+                            summary.counterpartyName.isNotEmpty
+                                ? summary.counterpartyName[0]
+                                : '?',
+                            style: const TextStyle(fontWeight: FontWeight.w800),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              InkWell(
+                                onTap: () => _openCounterpartyLedgerDialog(summary),
+                                child: Text(
+                                  summary.counterpartyName,
+                                  style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                                        fontWeight: FontWeight.w800,
+                                        decoration: TextDecoration.underline,
+                                      ),
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                subtitle,
+                                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                      color: const Color(0xFF5A6E82),
+                                    ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        Text(
+                          _money(amount),
+                          style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                                fontWeight: FontWeight.w900,
+                                color: owesMe
+                                    ? const Color(0xFF1B7D3A)
+                                    : iOwe
+                                        ? const Color(0xFFB33A2E)
+                                        : const Color(0xFF5C6470),
+                              ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    Row(
+                      children: [
+                        if (iOwe) ...[
+                          Expanded(
+                            child: FilledButton(
+                              onPressed: () async {
+                                final recipientUpiId = await _fetchMemberUpiId(
+                                  group.id,
+                                  summary.counterpartyUserId,
+                                );
+                                if (recipientUpiId == null || recipientUpiId.isEmpty) {
+                                  _showMessage(
+                                    'UPI ID is missing for ${summary.counterpartyName}.',
+                                  );
+                                  return;
+                                }
+
+                                final launched = await UpiDeepLink.launchUpiPayment(
+                                  receiverName: summary.counterpartyName,
+                                  amount: amount,
+                                  recipientUpiId: recipientUpiId,
+                                  note: 'SpliTease ${group.name}',
+                                );
+
+                                if (!mounted) {
+                                  return;
+                                }
+
+                                _showMessage(
+                                  launched
+                                      ? 'UPI app opened for ${summary.counterpartyName}.'
+                                      : 'Could not open UPI app on this device.',
+                                );
+                              },
+                              style: FilledButton.styleFrom(
+                                padding: const EdgeInsets.symmetric(vertical: 12),
+                                backgroundColor: const Color(0xFF1A4A8F),
+                              ),
+                              child: const Text(
+                                'Pay by UPI',
+                                style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: FilledButton(
+                              onPressed: () {
+                                _showMessage('Marked as paid by cash (stub).');
+                              },
+                              style: FilledButton.styleFrom(
+                                padding: const EdgeInsets.symmetric(vertical: 12),
+                                backgroundColor: const Color(0xFF1A4A8F),
+                              ),
+                              child: const Text(
+                                'Pay by cash',
+                                style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700),
+                              ),
+                            ),
+                          ),
+                        ] else if (owesMe) ...[
+                          Expanded(
+                            child: FilledButton(
+                              onPressed: () {
+                                _showMessage('Request sent (stub).');
+                              },
+                              style: FilledButton.styleFrom(
+                                padding: const EdgeInsets.symmetric(vertical: 12),
+                                backgroundColor: const Color(0xFF1A4A8F),
+                              ),
+                              child: const Text(
+                                'Request',
+                                style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700),
+                              ),
+                            ),
+                          ),
+                        ] else ...[
+                          Expanded(
+                            child: OutlinedButton(
+                              onPressed: null,
+                              child: const Text('Settled'),
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ],
+                ),
+              );
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  List<_SettleUpSummary> _buildSettleUpSummaries({
+    required List<_GroupTransaction> transactions,
+    required String currentUserId,
+  }) {
+    final map = <String, _SettleUpSummary>{};
+
+    for (final tx in transactions) {
+      final detail = tx.settlementDetails;
+      if (detail == null) {
+        continue;
+      }
+
+      final isCurrentDebtor = detail.debtorUserId == currentUserId;
+      final isCurrentCreditor = detail.creditorUserId == currentUserId;
+      if (!isCurrentDebtor && !isCurrentCreditor) {
+        continue;
+      }
+
+      final counterpartyUserId =
+          isCurrentDebtor ? detail.creditorUserId : detail.debtorUserId;
+      final counterpartyName = isCurrentDebtor ? detail.creditorName : detail.debtorName;
+
+      final summary = map.putIfAbsent(
+        counterpartyUserId,
+        () => _SettleUpSummary(
+          counterpartyUserId: counterpartyUserId,
+          counterpartyName: counterpartyName,
+          netCents: 0,
+          ledgerLines: <_CounterpartyLedgerLine>[],
+        ),
+      );
+
+      summary.ledgerLines.add(
+        _CounterpartyLedgerLine(
+          fromName: detail.debtorName,
+          toName: detail.creditorName,
+          amountCents: detail.amountCents,
+        ),
+      );
+
+      if (isCurrentDebtor) {
+        summary.netCents += detail.amountCents;
+      } else {
+        summary.netCents -= detail.amountCents;
+      }
+    }
+
+    final summaries = map.values.where((item) => item.netCents != 0).toList();
+    summaries.sort((a, b) => b.netCents.abs().compareTo(a.netCents.abs()));
+    return summaries;
+  }
+
+  Future<void> _openCounterpartyLedgerDialog(_SettleUpSummary summary) async {
+    await showDialog<void>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: Text('Transactions with ${summary.counterpartyName}'),
+          content: SizedBox(
+            width: 420,
+            child: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  ...summary.ledgerLines.map(
+                    (line) => Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: Text(
+                        '${line.fromName} needs to pay ${_money(line.amountCents / 100)} to ${line.toName}',
+                      ),
+                    ),
+                  ),
+                  const Divider(height: 20),
+                  Text(
+                    summary.netCents > 0
+                        ? 'Net: You need to pay ${_money(summary.netCents / 100)} to ${summary.counterpartyName}'
+                        : 'Net: ${summary.counterpartyName} needs to pay you ${_money(summary.netCents.abs() / 100)}',
+                    style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                          fontWeight: FontWeight.w700,
+                        ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Close'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  List<_GroupTransaction> _buildSettlementPreviewTransactions({
+    required String expenseName,
+    required List<_MemberOption> members,
+    required Map<String, double> paidByUserId,
+    required Map<String, bool> includeMap,
+    required String? currentUserId,
+  }) {
+    int toCents(double value) => (value * 100).round();
+    final selected = members.where((m) => includeMap[m.userId] ?? false).toList();
+    if (selected.isEmpty) {
+      return <_GroupTransaction>[];
+    }
+
+    final totalCents = paidByUserId.values.fold<int>(0, (sum, amount) => sum + toCents(amount));
+    if (totalCents <= 0) {
+      return <_GroupTransaction>[];
+    }
+
+    final shareBase = totalCents ~/ selected.length;
+    final remainder = totalCents % selected.length;
+    final extraByUserId = <String, int>{};
+    for (var i = 0; i < selected.length; i++) {
+      extraByUserId[selected[i].userId] = i < remainder ? 1 : 0;
+    }
+
+    final nameByUserId = <String, String>{for (final m in members) m.userId: m.displayName};
+    final paidLines = members
+        .map(
+          (member) => _PaidByLine(
+            memberName: member.displayName,
+            amount: (paidByUserId[member.userId] ?? 0),
+          ),
+        )
+        .toList();
+    final participantNames = selected.map((member) => member.displayName).toList();
+    final expenseDetails = _ExpenseTransactionDetails(
+      expenseName: expenseName,
+      totalAmount: totalCents / 100,
+      paidBy: paidLines,
+      participants: participantNames,
+    );
+
+    final creditors = <_SplitNode>[];
+    final debtors = <_SplitNode>[];
+
+    for (final member in members) {
+      final paid = toCents(paidByUserId[member.userId] ?? 0);
+      final selectedShare = includeMap[member.userId] == true
+          ? (shareBase + (extraByUserId[member.userId] ?? 0))
+          : 0;
+      final balance = paid - selectedShare;
+
+      if (balance > 0) {
+        creditors.add(_SplitNode(userId: member.userId, amountCents: balance));
+      } else if (balance < 0) {
+        debtors.add(_SplitNode(userId: member.userId, amountCents: -balance));
+      }
+    }
+
+    creditors.sort((a, b) => b.amountCents.compareTo(a.amountCents));
+    debtors.sort((a, b) => b.amountCents.compareTo(a.amountCents));
+
+    final results = <_GroupTransaction>[];
+    var ci = 0;
+    var di = 0;
+
+    while (ci < creditors.length && di < debtors.length) {
+      final creditor = creditors[ci];
+      final debtor = debtors[di];
+      final transfer = creditor.amountCents < debtor.amountCents
+          ? creditor.amountCents
+          : debtor.amountCents;
+
+      final debtorName = nameByUserId[debtor.userId] ?? 'Member';
+      final creditorName = nameByUserId[creditor.userId] ?? 'Member';
+      final isCreditForCurrentUser = creditor.userId == currentUserId;
+
+      results.add(
+        _GroupTransaction(
+          date: _formatDate(DateTime.now()).split(',').first,
+          title: '$debtorName pays $creditorName',
+          subtitle: expenseName,
+          amount: transfer / 100,
+          isCredit: isCreditForCurrentUser,
+          icon: Icons.swap_horiz,
+          settlementDetails: _SettlementTransactionDetails(
+            debtorUserId: debtor.userId,
+            debtorName: debtorName,
+            creditorUserId: creditor.userId,
+            creditorName: creditorName,
+            amountCents: transfer,
+          ),
+        ),
+      );
+
+      creditor.amountCents -= transfer;
+      debtor.amountCents -= transfer;
+
+      if (creditor.amountCents <= 0) {
+        ci++;
+      }
+      if (debtor.amountCents <= 0) {
+        di++;
+      }
+    }
+
+    final expenseRow = _GroupTransaction(
+      date: _formatDate(DateTime.now()).split(',').first,
+      title: expenseName,
+      subtitle: 'Expense added',
+      amount: totalCents / 100,
+      isCredit: false,
+      icon: Icons.receipt_long,
+      expenseDetails: expenseDetails,
+    );
+
+    if (results.isEmpty) {
+      return <_GroupTransaction>[expenseRow];
+    }
+
+    return <_GroupTransaction>[expenseRow, ...results];
   }
 
   Future<void> _openAddMemberDialog(GroupSummary group) async {
@@ -1470,6 +2526,418 @@ class _GroupsScreenState extends State<GroupsScreen>
               child: const Text('Send Invite'),
             ),
           ],
+        );
+      },
+    );
+  }
+
+  Future<List<_GroupMemberDirectoryItem>> _fetchGroupMembersDirectory(String groupId) async {
+    final rows = await _client.rpc('get_group_members_with_email', params: {
+      '_group_id': groupId,
+    }) as List<dynamic>;
+
+    return rows
+        .map(
+          (row) => _GroupMemberDirectoryItem(
+            userId: row['user_id']?.toString() ?? '',
+            name: row['display_name']?.toString() ?? 'Member',
+            email: row['email']?.toString() ?? '',
+            role: row['role']?.toString() ?? 'member',
+          ),
+        )
+        .where((member) => member.userId.isNotEmpty)
+        .toList();
+  }
+
+  Future<String?> _askMemberEmail() async {
+    final controller = TextEditingController();
+
+    return showDialog<String>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Add member'),
+          content: TextField(
+            controller: controller,
+            keyboardType: TextInputType.emailAddress,
+            autofocus: true,
+            decoration: const InputDecoration(
+              labelText: 'User email',
+              hintText: 'friend@email.com',
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () {
+                final email = controller.text.trim().toLowerCase();
+                if (!email.contains('@')) {
+                  _showMessage('Enter a valid email address.');
+                  return;
+                }
+                Navigator.of(context).pop(email);
+              },
+              child: const Text('Add'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<bool> _addMemberByEmail(GroupSummary group, String email) async {
+    try {
+      await _client.rpc('add_group_member_by_email', params: {
+        '_group_id': group.id,
+        '_invitee_email': email,
+      });
+      _showMessage('Member added: $email');
+      return true;
+    } on PostgrestException catch (error) {
+      _showMessage('Could not add member (${error.message}).');
+      return false;
+    } catch (_) {
+      _showMessage('Unable to add member right now.');
+      return false;
+    }
+  }
+
+  Future<bool> _removeMemberByUserId(
+    GroupSummary group,
+    _GroupMemberDirectoryItem member,
+  ) async {
+    final user = _currentUser;
+    if (user == null) {
+      return false;
+    }
+
+    if (group.createdByUserId != user.id) {
+      _showMessage('Only the group creator can remove members.');
+      return false;
+    }
+
+    if (member.userId == group.createdByUserId || member.role == 'owner') {
+      _showMessage('Group creator cannot be removed.');
+      return false;
+    }
+
+    try {
+      await _client
+          .from('group_members')
+          .delete()
+          .eq('group_id', group.id)
+          .eq('user_id', member.userId);
+
+      _showMessage('${member.name} removed from group.');
+      return true;
+    } on PostgrestException catch (error) {
+      _showMessage('Could not remove member (${error.message}).');
+      return false;
+    } catch (_) {
+      _showMessage('Unable to remove member right now.');
+      return false;
+    }
+  }
+
+  Future<void> _exitGroup(GroupSummary group) async {
+    final user = _currentUser;
+    if (user == null) {
+      return;
+    }
+
+    if (group.createdByUserId == user.id) {
+      _showMessage('Group creator cannot exit. Delete the group instead.');
+      return;
+    }
+
+    final shouldExit = await showDialog<bool>(
+          context: context,
+          builder: (context) {
+            return AlertDialog(
+              title: const Text('Exit group?'),
+              content: Text('You will leave "${group.name}".'),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(false),
+                  child: const Text('Cancel'),
+                ),
+                FilledButton(
+                  onPressed: () => Navigator.of(context).pop(true),
+                  child: const Text('Exit'),
+                ),
+              ],
+            );
+          },
+        ) ??
+        false;
+
+    if (!shouldExit) {
+      return;
+    }
+
+    try {
+      await _client
+          .from('group_members')
+          .delete()
+          .eq('group_id', group.id)
+          .eq('user_id', user.id);
+
+      if (!mounted) {
+        return;
+      }
+
+      Navigator.of(context).pop();
+      _showMessage('You exited ${group.name}.');
+      await _loadData();
+    } on PostgrestException catch (error) {
+      _showMessage('Could not exit group (${error.message}).');
+    } catch (_) {
+      _showMessage('Unable to exit group right now.');
+    }
+  }
+
+  Future<void> _openMembersDirectoryPopup(GroupSummary group) async {
+    final isCreator = group.createdByUserId == _currentUser?.id;
+    Future<List<_GroupMemberDirectoryItem>> membersFuture =
+        _fetchGroupMembersDirectory(group.id);
+
+    await showDialog<void>(
+      context: context,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setModalState) {
+            return Dialog(
+              insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
+              child: SizedBox(
+                width: 560,
+                height: 560,
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  '${group.name} members',
+                                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                                        fontWeight: FontWeight.w700,
+                                      ),
+                                ),
+                                const SizedBox(height: 4),
+                                Text(
+                                  'Creator: ${group.createdByName}',
+                                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                                        color: const Color(0xFF5A6E82),
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          IconButton(
+                            onPressed: () => Navigator.of(context).pop(),
+                            icon: const Icon(Icons.close),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      Expanded(
+                        child: Stack(
+                          children: [
+                            FutureBuilder<List<_GroupMemberDirectoryItem>>(
+                              future: membersFuture,
+                              builder: (context, snapshot) {
+                                if (snapshot.connectionState == ConnectionState.waiting) {
+                                  return const Center(child: CircularProgressIndicator());
+                                }
+
+                                if (snapshot.hasError) {
+                                  return Center(
+                                    child: Text(
+                                      'Could not load members.',
+                                      style: Theme.of(context).textTheme.bodyMedium,
+                                    ),
+                                  );
+                                }
+
+                                final members = snapshot.data ?? <_GroupMemberDirectoryItem>[];
+                                if (members.isEmpty) {
+                                  return Center(
+                                    child: Text(
+                                      'No members found for this group.',
+                                      style: Theme.of(context).textTheme.bodyMedium,
+                                    ),
+                                  );
+                                }
+
+                                return ListView.separated(
+                                  padding: const EdgeInsets.only(bottom: 80),
+                                  itemCount: members.length,
+                                  separatorBuilder: (_, __) => const SizedBox(height: 8),
+                                  itemBuilder: (context, index) {
+                                    final member = members[index];
+                                    final canRemove = isCreator &&
+                                        member.userId != group.createdByUserId &&
+                                        member.role != 'owner';
+                                    final isGroupCreator = member.userId == group.createdByUserId;
+                                    return ListTile(
+                                      tileColor: const Color(0xFFF3F8FD),
+                                      shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(12),
+                                      ),
+                                      leading: CircleAvatar(
+                                        backgroundColor: const Color(0xFFD8ECFA),
+                                        child: Text(
+                                          member.name.isNotEmpty
+                                              ? member.name[0].toUpperCase()
+                                              : '?',
+                                          style: const TextStyle(color: Color(0xFF1D6CAB)),
+                                        ),
+                                      ),
+                                      title: Text(member.name),
+                                      subtitle: Column(
+                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        children: [
+                                          Text(member.email.isEmpty ? 'No email available' : member.email),
+                                          if (isGroupCreator)
+                                            Container(
+                                              margin: const EdgeInsets.only(top: 4),
+                                              padding: const EdgeInsets.symmetric(
+                                                horizontal: 8,
+                                                vertical: 2,
+                                              ),
+                                              decoration: BoxDecoration(
+                                                color: const Color(0xFFD8ECFA),
+                                                borderRadius: BorderRadius.circular(999),
+                                              ),
+                                              child: const Text(
+                                                'Creator',
+                                                style: TextStyle(
+                                                  fontSize: 11,
+                                                  fontWeight: FontWeight.w700,
+                                                  color: Color(0xFF1D6CAB),
+                                                ),
+                                              ),
+                                            ),
+                                        ],
+                                      ),
+                                      trailing: canRemove
+                                          ? IconButton(
+                                              tooltip: 'Remove member',
+                                              icon: const Icon(
+                                                Icons.delete_outline,
+                                                color: Color(0xFFB33A2E),
+                                              ),
+                                              onPressed: () async {
+                                                final remove = await showDialog<bool>(
+                                                      context: context,
+                                                      builder: (context) {
+                                                        return AlertDialog(
+                                                          title: const Text('Remove member?'),
+                                                          content: Text(
+                                                            'Remove ${member.name} from ${group.name}?',
+                                                          ),
+                                                          actions: [
+                                                            TextButton(
+                                                              onPressed: () => Navigator.of(context).pop(false),
+                                                              child: const Text('Cancel'),
+                                                            ),
+                                                            FilledButton(
+                                                              style: FilledButton.styleFrom(
+                                                                backgroundColor: const Color(0xFFB33A2E),
+                                                              ),
+                                                              onPressed: () => Navigator.of(context).pop(true),
+                                                              child: const Text('Remove'),
+                                                            ),
+                                                          ],
+                                                        );
+                                                      },
+                                                    ) ??
+                                                    false;
+
+                                                if (!remove) {
+                                                  return;
+                                                }
+
+                                                final removed = await _removeMemberByUserId(group, member);
+                                                if (!removed) {
+                                                  return;
+                                                }
+
+                                                if (!mounted) {
+                                                  return;
+                                                }
+
+                                                setModalState(() {
+                                                  membersFuture = _fetchGroupMembersDirectory(group.id);
+                                                });
+                                                await _loadData();
+                                              },
+                                            )
+                                          : null,
+                                    );
+                                  },
+                                );
+                              },
+                            ),
+                            Positioned(
+                              right: 0,
+                              bottom: 0,
+                              child: FloatingActionButton.extended(
+                                onPressed: isCreator
+                                    ? () async {
+                                        final email = await _askMemberEmail();
+                                        if (email == null || email.isEmpty) {
+                                          return;
+                                        }
+
+                                        final added = await _addMemberByEmail(group, email);
+                                        if (!added) {
+                                          return;
+                                        }
+
+                                        if (!mounted) {
+                                          return;
+                                        }
+
+                                        setModalState(() {
+                                          membersFuture = _fetchGroupMembersDirectory(group.id);
+                                        });
+                                        await _loadData();
+                                      }
+                                    : () => _exitGroup(group),
+                                backgroundColor:
+                                    isCreator ? const Color(0xFF1A4A8F) : const Color(0xFFB33A2E),
+                                icon: Icon(
+                                  isCreator ? Icons.person_add_alt_1 : Icons.logout_rounded,
+                                  color: Colors.white,
+                                ),
+                                label: Text(
+                                  isCreator ? 'Add member' : 'Exit Group',
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            );
+          },
         );
       },
     );
@@ -1643,6 +3111,69 @@ class _GroupsScreenState extends State<GroupsScreen>
     }
   }
 
+  Future<void> _onGroupLongPress(GroupSummary group) async {
+    final user = _currentUser;
+    if (user == null) {
+      return;
+    }
+
+    if (group.createdByUserId != user.id) {
+      _showMessage('Only the group creator can delete this group.');
+      return;
+    }
+
+    final shouldDelete = await showDialog<bool>(
+          context: context,
+          builder: (context) {
+            return AlertDialog(
+              title: const Text('Delete group?'),
+              content: Text(
+                'Delete "${group.name}" for all members? This cannot be undone.',
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(false),
+                  child: const Text('Cancel'),
+                ),
+                FilledButton(
+                  style: FilledButton.styleFrom(
+                    backgroundColor: const Color(0xFFB33A2E),
+                  ),
+                  onPressed: () => Navigator.of(context).pop(true),
+                  child: const Text('Delete'),
+                ),
+              ],
+            );
+          },
+        ) ??
+        false;
+
+    if (!shouldDelete) {
+      return;
+    }
+
+    try {
+      await _client.from('groups').delete().eq('id', group.id);
+
+      if (!mounted) {
+        return;
+      }
+
+      _showMessage('Group deleted.');
+      await _loadData();
+    } on PostgrestException catch (error) {
+      if (!mounted) {
+        return;
+      }
+      _showMessage('Could not delete group (${error.message}).');
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+      _showMessage('Unable to delete group right now.');
+    }
+  }
+
   void _showMessage(String message) {
     if (!mounted) {
       return;
@@ -1711,6 +3242,26 @@ class _GroupsScreenState extends State<GroupsScreen>
   static String _money(double value) {
     final sign = value < 0 ? '-' : '';
     return '$sign₹${value.abs().toStringAsFixed(2)}';
+  }
+  static String _formatDate(DateTime date) {
+    const monthNames = [
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec',
+    ];
+
+    final month = monthNames[date.month - 1];
+    final day = date.day.toString().padLeft(2, '0');
+    return '$month $day, ${date.year}';
   }
 
   @override
@@ -1798,6 +3349,7 @@ class _GroupsScreenState extends State<GroupsScreen>
                       child: _GroupBar(
                         group: group,
                         onTap: () => _openGroupDetailPopup(group),
+                        onLongPress: () => _onGroupLongPress(group),
                       ),
                     ),
                   ),
@@ -1852,10 +3404,12 @@ class _GroupBar extends StatelessWidget {
   const _GroupBar({
     required this.group,
     required this.onTap,
+    this.onLongPress,
   });
 
   final GroupSummary group;
   final VoidCallback onTap;
+  final VoidCallback? onLongPress;
 
   @override
   Widget build(BuildContext context) {
@@ -1881,6 +3435,7 @@ class _GroupBar extends StatelessWidget {
       child: InkWell(
         borderRadius: BorderRadius.circular(14),
         onTap: onTap,
+        onLongPress: onLongPress,
         child: Padding(
           padding: const EdgeInsets.all(14),
           child: Row(
@@ -1907,7 +3462,7 @@ class _GroupBar extends StatelessWidget {
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      'Created by ${group.createdByUserId}',
+                      'Created by ${group.createdByName}',
                       style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                             color: const Color(0xFF5A6E82),
                           ),
@@ -2062,105 +3617,115 @@ class _BalanceCard extends StatelessWidget {
 }
 
 class _TransactionRow extends StatelessWidget {
-  const _TransactionRow({required this.transaction});
+  const _TransactionRow({required this.transaction, this.onTap});
 
   final _GroupTransaction transaction;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 10),
-      decoration: BoxDecoration(
-        color: Colors.white,
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
         borderRadius: BorderRadius.circular(18),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withAlpha(10),
-            blurRadius: 10,
-            offset: const Offset(0, 5),
+        onTap: onTap,
+        child: Container(
+          margin: const EdgeInsets.only(bottom: 10),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(18),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withAlpha(10),
+                blurRadius: 10,
+                offset: const Offset(0, 5),
+              ),
+            ],
           ),
-        ],
-      ),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-        child: Row(
-          children: [
-            Expanded(
-              flex: 2,
-              child: Container(
-                padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFE9F4FF),
-                  borderRadius: BorderRadius.circular(14),
-                ),
-                child: Center(
-                  child: Text(
-                    transaction.date,
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: const Color(0xFF3A4450),
-                          fontWeight: FontWeight.w700,
-                        ),
-                    textAlign: TextAlign.center,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            child: Row(
+              children: [
+                Expanded(
+                  flex: 2,
+                  child: Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFE9F4FF),
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    child: Center(
+                      child: Text(
+                        transaction.date,
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                              color: const Color(0xFF3A4450),
+                              fontWeight: FontWeight.w700,
+                            ),
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
                   ),
                 ),
-              ),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              flex: 1,
-              child: Container(
-                padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFF5F8FC),
-                  borderRadius: BorderRadius.circular(14),
+                const SizedBox(width: 10),
+                Expanded(
+                  flex: 1,
+                  child: Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF5F8FC),
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    child: Icon(
+                      transaction.icon,
+                      color: const Color(0xFF1D6CAB),
+                      size: 22,
+                    ),
+                  ),
                 ),
-                child: Icon(
-                  transaction.icon,
-                  color: const Color(0xFF1D6CAB),
-                  size: 22,
+                const SizedBox(width: 10),
+                Expanded(
+                  flex: 5,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Text(
+                        transaction.title,
+                        style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                              fontWeight: FontWeight.w700,
+                            ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        transaction.subtitle,
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                              color: const Color(0xFF5A6E82),
+                            ),
+                      ),
+                    ],
+                  ),
                 ),
-              ),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              flex: 5,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Text(
-                    transaction.title,
+                const SizedBox(width: 10),
+                Expanded(
+                  flex: 2,
+                  child: Text(
+                    '${transaction.isCredit ? '+' : '-'}₹${transaction.amount.toStringAsFixed(2)}',
+                    textAlign: TextAlign.right,
                     style: Theme.of(context).textTheme.bodyLarge?.copyWith(
                           fontWeight: FontWeight.w700,
+                          color:
+                              transaction.isCredit ? const Color(0xFF1B7D3A) : const Color(0xFFB33A2E),
                         ),
                   ),
-                  const SizedBox(height: 4),
-                  Text(
-                    transaction.subtitle,
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: const Color(0xFF5A6E82),
-                        ),
-                  ),
-                ],
-              ),
+                ),
+              ],
             ),
-            const SizedBox(width: 10),
-            Expanded(
-              flex: 2,
-              child: Text(
-                '${transaction.isCredit ? '+' : '-'}₹${transaction.amount.toStringAsFixed(2)}',
-                textAlign: TextAlign.right,
-                style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                      fontWeight: FontWeight.w700,
-                      color: transaction.isCredit ? const Color(0xFF1B7D3A) : const Color(0xFFB33A2E),
-                    ),
-              ),
-            ),
-          ],
+          ),
         ),
       ),
     );
-  }
+}
+
 }
 
 class _QuickStat extends StatelessWidget {
@@ -2614,12 +4179,35 @@ class _MemberOption {
   final String displayName;
 }
 
+class _GroupMemberDirectoryItem {
+  const _GroupMemberDirectoryItem({
+    required this.userId,
+    required this.name,
+    required this.email,
+    required this.role,
+  });
+
+  final String userId;
+  final String name;
+  final String email;
+  final String role;
+}
+
+class _SplitNode {
+  _SplitNode({required this.userId, required this.amountCents});
+
+  final String userId;
+  int amountCents;
+}
+
 class GroupSummary {
   GroupSummary({
     required this.id,
     required this.name,
     required this.icon,
     required this.createdByUserId,
+    required this.createdByName,
+    required this.createdAt,
     required this.totalExpenses,
     required this.totalOwed,
     required this.balance,
@@ -2631,6 +4219,8 @@ class GroupSummary {
   final String name;
   final String icon;
   final String createdByUserId;
+  final String createdByName;
+  final DateTime createdAt;
   final double totalExpenses;
   final double totalOwed;
   final double balance;
