@@ -4617,7 +4617,7 @@ class _TransactionRow extends StatelessWidget {
 }
 
 class _QuickStat extends StatelessWidget {
-  const _QuickStat({required this.label, this.value});
+  const _QuickStat({required this.label});
 
   final String label;
   final String? value;
