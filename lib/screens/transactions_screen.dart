@@ -4,7 +4,9 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 class TransactionsScreen extends StatefulWidget {
-  const TransactionsScreen({super.key});
+  const TransactionsScreen({super.key, this.refreshTrigger});
+
+  final ValueNotifier<bool>? refreshTrigger;
 
   @override
   State<TransactionsScreen> createState() => _TransactionsScreenState();
@@ -23,6 +25,19 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
     super.initState();
     _currentUserId = _client.auth.currentUser?.id;
     _transactionsFuture = _loadTransactions();
+    widget.refreshTrigger?.addListener(_refreshTransactions);
+  }
+
+  @override
+  void dispose() {
+    widget.refreshTrigger?.removeListener(_refreshTransactions);
+    super.dispose();
+  }
+
+  void _refreshTransactions() {
+    setState(() {
+      _transactionsFuture = _loadTransactions();
+    });
   }
 
   Future<List<_TransactionItem>> _loadTransactions() async {

@@ -304,14 +304,27 @@ class MainNavPage extends StatefulWidget {
 
 class _MainNavPageState extends State<MainNavPage> {
   final PageController _pageController = PageController();
+  final ValueNotifier<bool> _transactionRefreshTrigger = ValueNotifier<bool>(false);
+  late final List<Widget> _pages;
   int _selectedIndex = 0;
 
-  static final List<Widget> _pages = [
-    const HomeScreen(),
-    const GroupsScreen(),
-    const TransactionsScreen(),
-    const ProfileScreen(),
-  ];
+  @override
+  void initState() {
+    super.initState();
+    _pages = [
+      const HomeScreen(),
+      const GroupsScreen(),
+      TransactionsScreen(refreshTrigger: _transactionRefreshTrigger),
+      const ProfileScreen(),
+    ];
+  }
+
+  @override
+  void dispose() {
+    _transactionRefreshTrigger.dispose();
+    _pageController.dispose();
+    super.dispose();
+  }
 
   void _onItemTapped(int index) {
     setState(() {
@@ -322,12 +335,6 @@ class _MainNavPageState extends State<MainNavPage> {
         curve: Curves.easeOut,
       );
     });
-  }
-
-  @override
-  void dispose() {
-    _pageController.dispose();
-    super.dispose();
   }
 
   @override
@@ -343,6 +350,9 @@ class _MainNavPageState extends State<MainNavPage> {
           setState(() {
             _selectedIndex = index;
           });
+          if (index == 2) {
+            _transactionRefreshTrigger.value = !_transactionRefreshTrigger.value;
+          }
         },
         children: _pages,
       ),
