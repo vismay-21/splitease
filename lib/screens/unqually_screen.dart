@@ -4,12 +4,10 @@ import 'package:splitease/utils/image_recognition.dart';
 import 'package:splitease/utils/receipt_item_parser.dart';
 
 class UnquallyScreen extends StatefulWidget {
-  const UnquallyScreen({
-    super.key,
-    required this.memberNames,
-  });
+  const UnquallyScreen({super.key, required this.memberNames, this.controller});
 
   final List<String> memberNames;
+  final UnequalSplitController? controller;
 
   @override
   State<UnquallyScreen> createState() => _UnquallyScreenState();
@@ -27,6 +25,7 @@ class _UnquallyScreenState extends State<UnquallyScreen> {
   void initState() {
     super.initState();
     _addItem();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _publishItems());
   }
 
   @override
@@ -41,6 +40,7 @@ class _UnquallyScreenState extends State<UnquallyScreen> {
     setState(() {
       _items.add(_newDraft());
     });
+    _publishItems();
   }
 
   _UnequalItemDraft _newDraft({String? itemName, double? amount}) {
@@ -50,10 +50,32 @@ class _UnquallyScreenState extends State<UnquallyScreen> {
 
     return _UnequalItemDraft(
       itemNameController: TextEditingController(text: itemName ?? ''),
-      itemAmountController:
-          TextEditingController(text: amount == null ? '' : amount.toStringAsFixed(2)),
+      itemAmountController: TextEditingController(
+        text: amount == null ? '' : amount.toStringAsFixed(2),
+      ),
       selectedMembers: initialSelection,
       taxPercent: _selectedTaxPercent,
+      onChanged: _publishItems,
+    );
+  }
+
+  void _publishItems() {
+    widget.controller?._setItems(
+      _items.map((item) {
+        final selectedMembers = item.selectedMembers.entries
+            .where((entry) => entry.value)
+            .map((entry) => entry.key)
+            .toList();
+
+        return UnequalSplitItem(
+          itemName: item.itemNameController.text.trim(),
+          amount: double.tryParse(item.itemAmountController.text.trim()) ?? 0,
+          amountWithTax:
+              double.tryParse(item.itemAmountWithTaxesController.text.trim()) ??
+              0,
+          selectedMemberNames: selectedMembers,
+        );
+      }).toList(),
     );
   }
 
@@ -150,7 +172,9 @@ class _UnquallyScreenState extends State<UnquallyScreen> {
       });
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('No bill items detected in this image. Add items manually.'),
+          content: Text(
+            'No bill items detected in this image. Add items manually.',
+          ),
           duration: Duration(seconds: 4),
         ),
       );
@@ -187,6 +211,7 @@ class _UnquallyScreenState extends State<UnquallyScreen> {
         _addItem();
       }
     });
+    _publishItems();
   }
 
   Widget _buildTaxSelector() {
@@ -196,9 +221,9 @@ class _UnquallyScreenState extends State<UnquallyScreen> {
       children: [
         Text(
           'Tax / GST rate',
-          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                fontWeight: FontWeight.w600,
-              ),
+          style: Theme.of(
+            context,
+          ).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
         ),
         const SizedBox(height: 8),
         Wrap(
@@ -215,6 +240,7 @@ class _UnquallyScreenState extends State<UnquallyScreen> {
                     item.updateTaxPercent(percent);
                   }
                 });
+                _publishItems();
               },
             );
           }).toList(),
@@ -232,9 +258,9 @@ class _UnquallyScreenState extends State<UnquallyScreen> {
       children: [
         Text(
           'Add an expense, its amount and participants.',
-          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                color: const Color(0xFF5A6E82),
-              ),
+          style: Theme.of(
+            context,
+          ).textTheme.bodyMedium?.copyWith(color: const Color(0xFF5A6E82)),
         ),
         const SizedBox(height: 8),
         Row(
@@ -256,9 +282,9 @@ class _UnquallyScreenState extends State<UnquallyScreen> {
           const SizedBox(height: 8),
           Text(
             _scanSummary!,
-            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: const Color(0xFF5A6E82),
-                ),
+            style: Theme.of(
+              context,
+            ).textTheme.bodySmall?.copyWith(color: const Color(0xFF5A6E82)),
           ),
         ],
         if (_scanError != null) ...[
@@ -266,18 +292,18 @@ class _UnquallyScreenState extends State<UnquallyScreen> {
           Text(
             _scanError!,
             style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: const Color(0xFFB33A2E),
-                  fontWeight: FontWeight.w600,
-                ),
+              color: const Color(0xFFB33A2E),
+              fontWeight: FontWeight.w600,
+            ),
           ),
         ],
         if (_ocrPreview != null) ...[
           const SizedBox(height: 8),
           Text(
             'OCR preview: $_ocrPreview',
-            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: const Color(0xFF5A6E82),
-                ),
+            style: Theme.of(
+              context,
+            ).textTheme.bodySmall?.copyWith(color: const Color(0xFF5A6E82)),
           ),
         ],
         const SizedBox(height: 12),
@@ -296,8 +322,8 @@ class _UnquallyScreenState extends State<UnquallyScreen> {
                       child: Text(
                         'Item ${index + 1}',
                         style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                              fontWeight: FontWeight.w700,
-                            ),
+                          fontWeight: FontWeight.w700,
+                        ),
                       ),
                     ),
                     if (_items.length > 1)
@@ -313,6 +339,7 @@ class _UnquallyScreenState extends State<UnquallyScreen> {
                 ),
                 TextField(
                   controller: item.itemNameController,
+                  onChanged: (_) => _publishItems(),
                   decoration: const InputDecoration(
                     labelText: 'Item name',
                     hintText: 'Sandwich, Coffee, Pasta...',
@@ -321,7 +348,10 @@ class _UnquallyScreenState extends State<UnquallyScreen> {
                 const SizedBox(height: 8),
                 TextField(
                   controller: item.itemAmountController,
-                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                  onChanged: (_) => _publishItems(),
+                  keyboardType: const TextInputType.numberWithOptions(
+                    decimal: true,
+                  ),
                   decoration: const InputDecoration(
                     labelText: 'Item amount',
                     prefixText: 'Rs ',
@@ -336,23 +366,26 @@ class _UnquallyScreenState extends State<UnquallyScreen> {
                     prefixText: 'Rs ',
                     hintText: '0.00',
                     filled: true,
-                    fillColor: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.4),
+                    fillColor: Theme.of(context)
+                        .colorScheme
+                        .surfaceContainerHighest
+                        .withValues(alpha: 0.4),
                   ),
                 ),
                 const SizedBox(height: 10),
                 Text(
                   'Participants:',
-                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        fontWeight: FontWeight.w600,
-                      ),
+                  style: Theme.of(
+                    context,
+                  ).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
                 ),
                 const SizedBox(height: 4),
                 if (members.isEmpty)
                   Text(
                     'No members available.',
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: const Color(0xFF5A6E82),
-                        ),
+                      color: const Color(0xFF5A6E82),
+                    ),
                   )
                 else
                   ...members.map(
@@ -366,6 +399,7 @@ class _UnquallyScreenState extends State<UnquallyScreen> {
                         setState(() {
                           item.selectedMembers[name] = checked ?? false;
                         });
+                        _publishItems();
                       },
                     ),
                   ),
@@ -389,6 +423,7 @@ class _UnequalItemDraft {
     required this.itemNameController,
     required this.itemAmountController,
     required this.selectedMembers,
+    required this.onChanged,
     int taxPercent = 0,
   }) : itemAmountWithTaxesController = TextEditingController() {
     _currentTaxPercent = taxPercent;
@@ -402,12 +437,17 @@ class _UnequalItemDraft {
   final TextEditingController itemAmountController;
   final TextEditingController itemAmountWithTaxesController;
   final Map<String, bool> selectedMembers;
+  final VoidCallback onChanged;
 
-  void _onAmountChanged() => _updateTaxedAmount();
+  void _onAmountChanged() {
+    _updateTaxedAmount();
+    onChanged();
+  }
 
   void updateTaxPercent(int percent) {
     _currentTaxPercent = percent;
     _updateTaxedAmount();
+    onChanged();
   }
 
   void _updateTaxedAmount() {
@@ -426,4 +466,33 @@ class _UnequalItemDraft {
     itemAmountController.dispose();
     itemAmountWithTaxesController.dispose();
   }
+}
+
+class UnequalSplitController {
+  List<UnequalSplitItem> _items = const <UnequalSplitItem>[];
+
+  List<UnequalSplitItem> get items =>
+      List<UnequalSplitItem>.unmodifiable(_items);
+
+  void _setItems(List<UnequalSplitItem> items) {
+    _items = List<UnequalSplitItem>.unmodifiable(items);
+  }
+
+  void dispose() {
+    _items = const <UnequalSplitItem>[];
+  }
+}
+
+class UnequalSplitItem {
+  const UnequalSplitItem({
+    required this.itemName,
+    required this.amount,
+    required this.amountWithTax,
+    required this.selectedMemberNames,
+  });
+
+  final String itemName;
+  final double amount;
+  final double amountWithTax;
+  final List<String> selectedMemberNames;
 }
