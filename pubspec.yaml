@@ -37,6 +37,8 @@ dependencies:
   supabase_flutter: ^2.9.1
   url_launcher: ^6.3.2
   app_links: ^6.4.0
+  image_picker: ^1.1.2
+  flutter_tesseract_ocr: ^0.4.27
 
 dev_dependencies:
   flutter_test:
@@ -62,6 +64,8 @@ flutter:
 
   assets:
     - web/icons/Icon-512.png
+    - assets/tessdata_config.json
+    - assets/tessdata/
 
   # To add assets to your application, add an assets section, like this:
   # assets:

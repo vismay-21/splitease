@@ -5,7 +5,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>Splitease</string>
+	<string>Batvara</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -13,7 +13,7 @@
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>splitease</string>
+	<string>Batvara</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
@@ -56,5 +56,11 @@
 			</array>
 		</dict>
 	</array>
+	<key>NSCameraUsageDescription</key>
+	<string>Camera access is needed to scan receipt images for expense splitting.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Photo library access is needed to import receipt images for expense splitting.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>Photo library write access may be used for receipt scan workflows.</string>
 </dict>
 </plist>
